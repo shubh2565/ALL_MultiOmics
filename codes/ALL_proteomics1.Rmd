@@ -1,0 +1,140 @@
+---
+title: "ALL Proteomics se object generation"
+author: "Shubham Agrawal"
+date: "2025-05-05"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(SummarizedExperiment)
+library(tidyverse)
+```
+
+# Load the data
+
+Load the proteomics quantification data
+
+```{r}
+rawData <- read.delim("/Users/shubhamagrawal/Desktop/ALL/data/T-ALL multi-omics/Proteome_dataset_atleast 1 validvalue_ImputedGD.txt", sep = "\t")
+head(rawData)
+```
+
+Load the clinical data
+
+```{r}
+clinicalData <- read.delim("/Users/shubhamagrawal/Desktop/ALL/data/onlyProteomics/Data/Clinical_data_proteomics_28012024_KR.csv", sep = ",")
+head(clinicalData)
+```
+
+# Extract the normalized and imputed assay
+
+```{r}
+assay <- rawData[6:nrow(rawData) , 1:128]
+assay <- mutate_all(assay, function(x) as.numeric(as.character(x)))
+rownames(assay) <- paste0("p",seq(nrow(assay)))
+head(assay)
+```
+
+# Create row data
+
+```{r}
+# Extract the protein ID and gene information
+rd <- rawData[c("Protein.ID","Gene")]
+rd <- rd[6:nrow(rd),]
+colnames(rd)[1] <- "ProteinID"
+# update rownames
+rownames(rd) <- paste0("p",seq(nrow(rd)))
+head(rd)
+```
+
+
+# Create colData
+
+```{r}
+clinicalData$Sample.ID.Proteomics <- paste0("S", as.character(clinicalData$Sample.ID.Proteomics))
+clinicalData$Age <- as.numeric(clinicalData$Age)
+colnames(clinicalData)[which(names(clinicalData) == "Diagnosis.Relapse")] <- "diagnosisType"
+colnames(clinicalData)[which(names(clinicalData) == "Sample.ID.Proteomics")] <- "sample"
+colnames(clinicalData)[which(names(clinicalData) == "Cytogenetics")] <- "cytogenetics"
+# clinicalData %>% rename_with(~c("diagnosisType", "sample", "cytogenetics"), 
+#                              c("Diagnosis.Relapse", "Sample.ID.Proteomics", "Cytogenetics"))
+# rename(clinicalData, Diagnosis.Relapse = diagnosisType,
+#        Sample.ID.Proteomics = Sample.ID.Proteomics,
+#        Cytogenetics = cytogenetics)
+
+clinicalData <- clinicalData %>% 
+  mutate(
+    diseaseType = case_when(
+      Immunophenoytpe %in% c("T-ALL", "T-ALL ", "T-LBL/T-ALL") ~ "T-ALL",
+      Immunophenoytpe == "B-ALL" ~ "B-ALL",
+      Immunophenoytpe == "Sample contaminated, needs to be excluded " ~ "contaminated"
+    ),
+    riskGroup = case_when(
+      Risk.group %in% c("HR", "HR ") ~ "High Risk",
+      Risk.group %in% c("SR", "SR ") ~ "Standard Risk",
+      Risk.group %in% c("MR", "MR ") ~ "Middle Risk",
+      Risk.group %in% c("no HR", "non HR ") ~ "non High Risk",
+      Risk.group %in% c(".", NA) ~ NA,
+      Risk.group == "VHR" ~ "Very High Risk"
+    ),
+    predictionResponse = case_when(
+      Pred.resp. %in% c("Pred. poor", "Pred. Poor") ~ "poor",
+      Pred.resp. %in% c("Pred. good", "Pred. Good") ~ "good",
+      .default = NA
+    ),
+    ,
+    diagnosisType = case_when(
+      diagnosisType == "Diagnosis" ~ "Primary",
+      diagnosisType == "Relapse" ~ "Relapse"
+    )
+  )
+
+clinicalData$cytogenetics[clinicalData$cytogenetics == ""] <- "Normal Karyo"
+clinicalData$diagnosisType[clinicalData$sample == "S108"] <- "Relapse"
+clinicalData[clinicalData == ""] <- NA
+clinicalData <- subset(clinicalData,select = -c(Immunophenoytpe, ZNS, 
+                                                Pred.resp., Risiko.MRD,
+                                                Risk.group, 
+                                                Calculated.site.of.relapse, 
+                                                Timepoint.of.relapse, 
+                                                matched.pairs, Unnamed..13))
+
+
+head(clinicalData)
+```
+
+```{r}
+cd <- clinicalData %>%
+  arrange(as.numeric(sub("S", "", sample)))
+rownames(cd) <- cd$sample
+head(cd)
+```
+
+
+
+```{r}
+# # get the colData
+# cd <- rawData[2:5, 1:128]
+# cd$S1 <- c("T-ALL", "Diagnosis", "3.9", "Normal Karyo")
+# cd <- as.data.frame(t(cd))
+# colnames(cd) <- c("disease", "diagnosis", "dasatinibLogIC50", "cytogenetics")
+# cd$sample <- rownames(cd)
+# head(cd)
+```
+
+# Create the SummarizedExperiment object
+
+```{r}
+# create the SummarizedExperiment object
+se <- SummarizedExperiment(assays = list(Intensity=assay), rowData = rd, colData = cd)
+se
+```
+
+# Save the SummarizedExperiment object
+
+```{r}
+saveRDS(se, file = "protoemics.Rds")
+```

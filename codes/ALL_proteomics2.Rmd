@@ -1,0 +1,176 @@
+---
+title: "ALL proteomics data exploration and QC"
+author: "Shubham Agrawal"
+date: "2025-09-05"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dev = c("png","pdf"), fig.path = "./ALLproteomicsQC/")
+library(SummarizedExperiment)
+library(tidyverse)
+library(ggrepel)
+source("helper.R")
+```
+
+# Load the proteomics object
+
+```{r}
+se <- readRDS("protoemics.Rds")
+se
+```
+
+# Basic Visualization
+
+```{r}
+# Extract the assay data from the SummarizedExperiment object
+countMat <- assay(se)
+
+# Create a table with sample names and their corresponding percentage of
+# non-missing values
+plotTab <- tibble(
+  sample = se$sample,
+  perNA = colSums(is.na(countMat)) / nrow(countMat)
+)
+
+# Generate the bar plot using ggplot2
+ggplot(plotTab, aes(x = sample, y = 1 - perNA)) +
+  geom_bar(stat = "identity") +
+  ggtitle("Percentage of sample completeness") +
+  ylab("completeness") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+```
+
+```{r}
+plotBoxInstensities(se = se, colorByCol = "diseaseType", col = "sample",
+                               title = "Boxplot of Intensities")
+```
+
+```{r}
+pca <- stats::prcomp(t(assay(se)), center = TRUE, scale. = TRUE)
+p1 <- plotPCALL(pca = pca, se = se, color = "diseaseType", 
+                xaxis = "PC1", yaxis = "PC2")
+p1
+```
+
+# Association tests for the PCs
+
+
+```{r}
+resPCA <-  as.data.frame(pca$x)
+resPCA <- resPCA[ , 1:25]
+resPCA$sample <- rownames(pca$x)
+cd <- as.data.frame(colData(se))
+
+resAssc <- testAssociation(tabX = resPCA, tabY = cd, joinID = "sample", 
+                           correlation_method = "pearson", 
+                           plot = TRUE, pCut = 0.01, ifFdr = FALSE, pMax = 12, 
+                           onlySignificant = FALSE)
+
+p <- resAssc$plot
+p
+```
+
+```{r}
+library(pheatmap)
+
+annotationCol <- c("diagnosisType", "diseaseType")
+
+top <- 100
+exprMat <- assay(se)
+sds <- apply(exprMat, 1, sd)
+orderID <- names(sort(sds, decreasing = TRUE))
+geneIDs <- orderID[seq(1, top)]
+exprMat <- exprMat[geneIDs, ]
+geneSymbol <- rowData(se[match(geneIDs, rownames(se)), ])$Gene
+
+# Prepare column annotations from the metadata
+if (!is.null(annotationCol)) {
+    cd <- as.data.frame(colData(se))
+    annCol <- cd[row.names(cd) %in% colnames(exprMat), ][c(annotationCol)]
+    row.names(annCol) <- colnames(exprMat)
+} else {
+    annCol <- NA
+}
+
+# Prepare color scale for the heatmap
+color <- colorRampPalette(c("navy", "white", "firebrick"))(100)
+
+# Perform row normalization and clip extreme values
+exprMat <- t(scale(t(exprMat)))
+exprMat[exprMat > 4] <- 4
+exprMat[exprMat < -4] <- -4
+
+p <- pheatmap(exprMat, color = color, labels_row = geneSymbol,
+              treeheight_row = 0, treeheight_col = 0, 
+              main = "Top 100 Variant", annotation_col = annCol,
+              cutree_cols = 2)
+p
+```
+
+# Remove the contaminated sample
+
+```{r}
+se <- se[, se$diseaseType != "contaminated"]
+se
+```
+# Subset the se object based on disease type
+
+```{r}
+seBALL <- se[, se[["diseaseType"]] == "B-ALL"]
+print("B-ALL se object")
+seBALL
+seTALL <- se[, se[["diseaseType"]] == "T-ALL"]
+print("T-ALL se object")
+seTALL
+```
+
+
+```{r}
+# perform PCA
+pcaBALL <- stats::prcomp(t(assay(seBALL)), center = TRUE, scale. = TRUE)
+pBALL <- plotPCALL(pca = pcaBALL, se = seBALL, color = "diagnosisType", xaxis = "PC1", yaxis = "PC2")
+pBALL
+```
+
+```{r}
+# perform PCA
+pcaTALL <- stats::prcomp(t(assay(seTALL)), center = TRUE, scale. = TRUE)
+pTALL <- plotPCALL(pca = pcaTALL, se = seTALL, color = "diagnosisType", xaxis = "PC1", yaxis = "PC2")
+pTALL
+```
+
+```{r}
+resPCABALL <-  as.data.frame(pcaBALL$x)
+resPCABALL <- resPCABALL[ , 1:25]
+resPCABALL$sample <- rownames(pcaBALL$x)
+cdBALL <- as.data.frame(colData(seBALL))
+
+resAsscBALL <- testAssociation(tabX = resPCABALL, tabY = cdBALL, joinID = "sample", 
+                           correlation_method = "pearson", 
+                           plot = TRUE, pCut = 0.01, ifFdr = FALSE, pMax = 12, 
+                           onlySignificant = FALSE)
+
+p <- resAsscBALL$plot
+p
+```
+
+```{r}
+resPCATALL <-  as.data.frame(pcaTALL$x)
+resPCATALL <- resPCATALL[ , 1:25]
+resPCATALL$sample <- rownames(pcaTALL$x)
+cdTALL <- as.data.frame(colData(seTALL))
+
+resAsscTALL <- testAssociation(tabX = resPCATALL, tabY = cdTALL, joinID = "sample", 
+                           correlation_method = "pearson", 
+                           plot = TRUE, pCut = 0.01, ifFdr = FALSE, pMax = 12, 
+                           onlySignificant = FALSE)
+
+p <- resAsscTALL$plot
+p
+```

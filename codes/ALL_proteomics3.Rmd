@@ -1,0 +1,239 @@
+---
+title: "ALL proteomics differential expression and enrichment analysis"
+author: "Shubham Agrawal"
+date: "2025-09-09"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dev = c("png","pdf"), fig.path = "./ALLproteomicsDEA/")
+library(SummarizedExperiment)
+library(tidyverse)
+library(limma)
+library(ggrepel)
+source("helper.R")
+```
+
+# Load the proteomics object
+
+```{r}
+se <- readRDS("protoemics.Rds")
+se
+```
+
+Remove the contaminated sample first.
+
+```{r}
+se <- se[, se$diseaseType != "contaminated"]
+se
+```
+# Subset the se object based on disease type
+
+```{r}
+seBALL <- se[, se[["diseaseType"]] == "B-ALL"]
+print("B-ALL se object")
+seBALL
+seTALL <- se[, se[["diseaseType"]] == "T-ALL"]
+print("T-ALL se object")
+seTALL
+```
+
+```{r}
+exprMat <- assays(seBALL)[["Intensity"]]
+colData <- data.frame(colData(seBALL))
+# Create the design matrix
+design <- model.matrix(~diagnosisType, data = colData)
+# Get the names of the design matrix columns
+resNames <- colnames(design)
+# Extract the metadata from the SummarizedExperiment object
+meta <- as.data.frame(elementMetadata(seBALL))
+# Perform differential expression analysis
+fit <- limma::lmFit(exprMat, design = design)
+fit2 <- eBayes(fit)
+resDEBALL <- topTable(fit2, number = Inf, coef = resNames[length(resNames)])
+# Merge the results with metadata and format the results
+resDEBALL <- merge(resDEBALL, meta, by = 0, all = TRUE)
+resDEBALL <- as_tibble(resDEBALL) %>%
+  dplyr::rename(
+    log2FC = logFC, stat = t,
+    pvalue = P.Value, padj = adj.P.Val, ID = Row.names
+  ) %>%
+  select(-c(B, AveExpr)) %>%
+  filter(!is.na(padj)) %>%
+  arrange(pvalue)
+
+head(resDEBALL)
+
+plotVolcanoALL(resDE = resDEBALL, pFilter = 0.01, fcFilter = 0.8,
+               title = "Volcano Plot for B-ALL: Relapse vs Diagnosis")
+```
+
+```{r}
+exprMat <- assays(seTALL)[["Intensity"]]
+colData <- data.frame(colData(seTALL))
+# Create the design matrix
+design <- model.matrix(~diagnosisType, data = colData)
+# Get the names of the design matrix columns
+resNames <- colnames(design)
+# Extract the metadata from the SummarizedExperiment object
+meta <- as.data.frame(elementMetadata(seTALL))
+# Perform differential expression analysis
+fit <- limma::lmFit(exprMat, design = design)
+fit2 <- eBayes(fit)
+resDETALL <- topTable(fit2, number = Inf, coef = resNames[length(resNames)])
+# Merge the results with metadata and format the results
+resDETALL <- merge(resDETALL, meta, by = 0, all = TRUE)
+resDETALL <- as_tibble(resDETALL) %>%
+  dplyr::rename(
+    log2FC = logFC, stat = t,
+    pvalue = P.Value, padj = adj.P.Val, ID = Row.names
+  ) %>%
+  select(-c(B, AveExpr)) %>%
+  filter(!is.na(padj)) %>%
+  arrange(pvalue)
+
+head(resDETALL)
+
+plotVolcanoALL(resDE = resDETALL, pFilter = 0.01, fcFilter = 0.5,
+            title = "Volcano Plot for T-ALL: Relapse vs Diagnosis")
+
+```
+
+# Enrichment analysis
+
+```{r}
+library(piano)
+
+gmtFile = loadGSC("/Users/shubhamagrawal/Desktop/ALL/gene_sets/h.all.v2024.1.Hs.symbols.gmt.txt", type="gmt")
+statType = "pvalue"
+gsaMethod = "gsea"
+nPerm = 100
+corTab <- resDETALL %>%
+            arrange(pvalue) %>%
+            filter(!duplicated(Gene)) %>% # Remove duplicates by gene
+            arrange(stat)
+
+# Select appropriate statistic column for analysis
+if(statType == "stat") {
+  myCoef <- data.frame(row.names = corTab$Gene,
+                       stat = corTab$stat,
+                       stringsAsFactors = FALSE)
+} else {
+  myCoef <- data.frame(row.names = corTab$Gene,
+                       stat = corTab$log2FC,
+                       stringsAsFactors = FALSE)
+}
+
+# Perform pathway enrichment analysis using the chosen method
+if(gsaMethod == "page") {
+    res <- runGSA(geneLevelStats = myCoef,
+                  geneSetStat = "page",
+                  adjMethod = "fdr",
+                  gsc = gmtFile,
+                  signifMethod = 'nullDist')
+} else if(gsaMethod == "gsea") {
+    res <- runGSA(geneLevelStats = myCoef,
+                  geneSetStat = "gsea",
+                  adjMethod = "fdr",
+                  gsc = gmtFile,
+                  signifMethod = 'geneSampling',
+                  nPerm = nPerm)
+}
+
+# Summarize the results into a table
+resTab <- GSAsummaryTable(res)
+#colnames(resTab) <- c("Name", "Gene Number", "Stat", "p.up",
+#                      "p.up.adj", "p.down", "p.down.adj", "Number up",
+#                      "Number down")
+(resTab)
+
+```
+
+```{r}
+pCut = 0.05
+ifFDR = TRUE
+
+if (ifFDR) {
+  plotTab <- dplyr::filter(resTab, `p adj (dist.dir.up)` <= pCut | `p adj (dist.dir.dn)` <= pCut)
+} else {
+  plotTab <- dplyr::filter(resTab, `p (dist.dir.up)` <= pCut | `p (dist.dir.dn)` <= pCut)
+}
+
+plotTab <- apply(plotTab, 1, function(x) {
+        statSign <- as.numeric(x[3])
+        data.frame(Name = x[1], p = as.numeric(ifelse(statSign >= 0, x[4], x[6])), geneNum = ifelse(statSign >= 0, x[8], x[9]),
+                   Direction = ifelse(statSign > 0, "Up", "Down"), stringsAsFactors = FALSE)
+})
+
+plotTab <- data.frame(matrix(unlist(plotTab), nrow=length(plotTab), byrow=TRUE))
+colnames(plotTab)[which(names(plotTab) == "X1")] <- "Name"
+colnames(plotTab)[which(names(plotTab) == "X2")] <- "p"
+colnames(plotTab)[which(names(plotTab) == "X3")] <- "geneNum"
+colnames(plotTab)[which(names(plotTab) == "X4")] <- "Direction"
+
+
+pEnrich <- ggplot(data=plotTab, aes(x=Name, y= -log10(as.numeric(p)), fill=Direction)) +
+        geom_bar(position="dodge",stat="identity", width = 0.5) +
+        scale_fill_manual(values=c(Up = "brown", Down = "navyblue")) +
+        #coord_fixed(ratio = 0.5) +
+        coord_flip()  +
+        ylab(expression(-log[10]*'('*italic(P)*' value)')) +
+        ggtitle("Geneset enrichment") + theme_bw() + theme(plot.title = element_text(face = "bold", hjust =0.5),
+                                        axis.title = element_text(size=12))
+pEnrich
+```
+
+```{r}
+library("limma")
+source("giada/Enrichment_analysis.R")
+
+pathways <- readRDS("giada/Pathways_4Enrichment.rds")
+sorted_pathways = pathways$sorted_pathways
+GSEA_combined = pathways$GSEA_combined
+
+# log2FoldChange, stat, padj, SYMBOL variables
+
+resDEb <- resDEBALL
+resDEt <- resDETALL
+
+colnames(resDEb)[which(names(resDEb) == "log2FC")] <- "log2FoldChange"
+colnames(resDEt)[which(names(resDEt) == "log2FC")] <- "log2FoldChange"
+colnames(resDEb)[which(names(resDEb) == "Gene")] <- "SYMBOL"
+colnames(resDEt)[which(names(resDEt) == "Gene")] <- "SYMBOL"
+
+list_DE_outputs = list(B_ALL = resDEb, # ANALYSIS_1 is a data.frame with log2FoldChange, stat, padj, SYMBOL variables
+                       T_ALL = resDEt)
+
+#Enrich_res = Compute_Enrichment(list_DE_outputs,
+#                                my_GeneSet = GSEA_combined,
+#                                my_sorted_pathways = sorted_pathways,
+#                                enrich_method = "camera")
+#Plot_Enrichment(Enrich_res, fold_name = "Enrichment_fig_camera")
+
+Enrich_res = Compute_Enrichment(list_DE_outputs,
+                                my_GeneSet = GSEA_combined,
+                                my_sorted_pathways = sorted_pathways,
+                                enrich_method = "gsea")
+Plot_Enrichment(Enrich_res, fold_name = "enrichment_proteomics_gsea_disease")
+```
+```{r}
+my_genes_list <- GSEA_combined[["Gene and protein expression by JAK-STAT signaling after Interleukin-12 stimulation"]]
+
+
+my_resTab = resDETALL %>% filter(Gene %in% my_genes_list & padj < 1) %>% data.frame() %>% mutate(Direction = case_when(log2FC > 0 ~ "Up", log2FC < 0 ~ "Down")) 
+
+p = my_resTab %>%
+  ggplot(aes(x = reorder(Gene, log2FC) , y = log2FC, fill = Direction)) +
+  geom_col() +
+  coord_flip() + 
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  labs(y = "log2(FC)", x = NULL) +
+  scale_fill_manual(values = c("Up" = "red3", "Down" = "blue3"))
+p
+
+#reorder(Gene, desc(log2FC))
+```
+
+
