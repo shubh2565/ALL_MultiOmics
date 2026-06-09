@@ -1,0 +1,193 @@
+---
+title: "ALL Transcriptomics Differential Expression"
+author: "Shubham Agrawal"
+date: "2025-07-30"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dev = c("png","pdf"), fig.path = "./ALLTranscriptomicsDEA/")
+library(DESeq2)
+library(tidyverse)
+library(ggrepel)
+source("helper.R")
+```
+
+# Upload the object
+
+```{r}
+dds <- readRDS("/Users/shubhamagrawal/Desktop/ALL/ddsFiltered.Rds")
+dds
+```
+```{r}
+unique(dds$diseaseType)
+unique(dds$diagnosisType)
+dds <- dds[, !is.na(dds$diseaseType) & !is.na(dds$diagnosisType)]
+unique(dds$diseaseType)
+unique(dds$diagnosisType)
+```
+
+
+```{r}
+dds1 <- dds
+dds1
+```
+
+```{r, message=FALSE}
+dds1$diseaseType <- as.factor(dds1$diseaseType)
+levels(dds1$diseaseType)
+design(dds1) <- formula(~ diseaseType)
+dds1 <- DESeq(dds1)
+dds1
+```
+```{r}
+res1 <- results(dds1)
+head(res1)
+```
+
+```{r}
+summary(res1)
+sum(res1$padj < 0.1, na.rm=TRUE)
+```
+
+```{r}
+res1_05 <- results(dds1, alpha=0.05)
+summary(res1_05)
+sum(res1_05$padj < 0.05, na.rm=TRUE)
+```
+
+
+```{r}
+# pvalue or adjusted pvalue for Volcano plot?
+res1Volcano <- generateResforVolcano(res = res1, dds = dds1)
+plotVolcanoALL(res1Volcano, pFilter = 0.01, fcFilter = 10, 
+               title = "Volcano Plot: T-ALL vs B-ALL" )
+```
+
+```{r}
+ddsB <- dds[, dds$diseaseType == "B-ALL"]
+ddsB
+ddsT <- dds[, dds$diseaseType == "T-ALL"]
+ddsT
+```
+# B-ALL
+
+```{r, message=FALSE}
+ddsB$diagnosisType <- as.factor(ddsB$diagnosisType)
+levels(ddsB$diagnosisType)
+design(ddsB) <- formula(~ diagnosisType)
+ddsB <- DESeq(ddsB)
+ddsB
+```
+
+```{r}
+resB <- results(ddsB)
+head(resB)
+summary(resB)
+```
+```{r}
+resBVolcano <- generateResforVolcano(res = resB, dds = ddsB)
+plotVolcanoALL(resBVolcano, pFilter = 0.01, fcFilter = 8, 
+               title = "Volcano Plot for B-ALL: Relapse vs Primary" )
+```
+
+# T-ALL
+
+```{r, message=FALSE}
+ddsT$diagnosisType <- as.factor(ddsT$diagnosisType)
+levels(ddsT$diagnosisType)
+design(ddsT) <- formula(~ diagnosisType)
+ddsT <- DESeq(ddsT)
+ddsT
+```
+
+```{r}
+resT <- results(ddsT)
+head(resT)
+summary(resT)
+```
+
+```{r}
+resTVolcano <- generateResforVolcano(res = resT, dds = ddsT)
+plotVolcanoALL(resTVolcano, pFilter = 0.01, fcFilter = 4, 
+               title = "Volcano Plot for T-ALL: Relapse vs Primary" )
+```
+
+# Only paired samples
+
+```{r}
+# Convert colData to a data frame for easier manipulation
+cd <- as.data.frame(colData(dds))
+
+# Identify patients who have BOTH Primary and Relapse
+patients_with_both <- cd %>%
+  group_by(patID) %>%
+  filter(all(c("Primary", "Relapse") %in% diagnosisType)) %>%
+  pull(patID) %>%
+  unique()
+
+patients_with_both
+
+# Subset dds to keep only those patients
+ddsPaired <- dds[, cd$patID %in% patients_with_both]
+ddsPairedB <-  ddsPaired[, ddsPaired$diseaseType == "B-ALL"]
+ddsPairedB
+ddsPairedT <-  ddsPaired[, ddsPaired$diseaseType == "T-ALL"]
+ddsPairedT
+```
+```{r}
+ddsPairedT$diagnosisType <- as.factor(ddsPairedT$diagnosisType)
+ddsPairedT$patID <- as.factor(ddsPairedT$patID)
+design(ddsPairedT) <- formula(~ patID + diagnosisType)
+ddsPairedT <- DESeq(ddsPairedT)
+ddsPairedT
+```
+```{r}
+resPairedT <- results(ddsPairedT)
+head(resPairedT)
+summary(resPairedT)
+resPairedTVolcano <- generateResforVolcano(res = resPairedT, dds = ddsPairedT)
+plotVolcanoALL(resPairedTVolcano, pFilter = 0.05, fcFilter = 3, 
+               title = "Volcano Plot for T-ALL: Relapse vs Primary" )
+```
+
+# Enrichment analysis
+
+```{r}
+library("limma")
+source("giada/Enrichment_analysis.R")
+
+pathways <- readRDS("giada/Pathways_4Enrichment.rds")
+sorted_pathways = pathways$sorted_pathways
+GSEA_combined = pathways$GSEA_combined
+
+# log2FoldChange, stat, padj, SYMBOL variables
+
+resDEb <- resBVolcano
+resDEt <- resTVolcano
+
+colnames(resDEb)[which(names(resDEb) == "log2FC")] <- "log2FoldChange"
+colnames(resDEt)[which(names(resDEt) == "log2FC")] <- "log2FoldChange"
+colnames(resDEb)[which(names(resDEb) == "Gene")] <- "SYMBOL"
+colnames(resDEt)[which(names(resDEt) == "Gene")] <- "SYMBOL"
+
+list_DE_outputs = list(B_ALL = resDEb, # ANALYSIS_1 is a data.frame with log2FoldChange, stat, padj, SYMBOL variables
+                       T_ALL = resDEt)
+
+#Enrich_res = Compute_Enrichment(list_DE_outputs,
+#                                my_GeneSet = GSEA_combined,
+#                                my_sorted_pathways = sorted_pathways,
+#                                enrich_method = "camera")
+#Plot_Enrichment(Enrich_res, fold_name = "Enrichment_fig_camera")
+
+Enrich_res = Compute_Enrichment(list_DE_outputs,
+                                my_GeneSet = GSEA_combined,
+                                my_sorted_pathways = sorted_pathways,
+                                enrich_method = "gsea")
+Plot_Enrichment(Enrich_res, fold_name = "enrichment_transcriptomics_gsea_disease")
+```
+
+
+

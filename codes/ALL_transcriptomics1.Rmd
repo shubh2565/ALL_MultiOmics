@@ -1,0 +1,218 @@
+---
+title: "ALL Transcriptomics dds object generation"
+author: "Shubham Agrawal"
+date: "2025-07-14"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Read the counts txt file
+
+```{r}
+df <- data.table::fread(file = "/Users/shubhamagrawal/Desktop/ALL/data/Downloaded_from_Cluster_transcriptome/featureCounts_combined.txt", sep = "\t")
+head(df)
+colnames(df)
+```
+
+```{r}
+class(df)
+countdf <- df[, c("sampleID", "gene_id", "num_reads")]
+dim(countdf)
+head(countdf)
+countdf$sampleID <- str_split_fixed(countdf$sampleID, "-x", 2)[,1]
+countdf$gene_id <- str_split_fixed(countdf$gene_id, "\\.", n = 2)[,1]
+head(countdf)
+```
+
+```{r}
+#countdfSub <- countdf[1:1792420,]
+countTable <- pivot_wider(countdf, 
+                          names_from = sampleID, 
+                          values_from = num_reads)
+
+countMat <- as.matrix(countTable[, -1])
+rownames(countMat) <- countTable$gene_id
+dim(countMat)
+```
+
+```{r}
+samplesID <- colnames(countMat)
+samples <- str_split_fixed(samplesID, "_pdx[1-2]", 2)[,1]
+samples <- str_split_fixed(samples, "_2", 2)[,1]
+length(samples)
+length(unique(samples))
+duplicates <- samples[duplicated(samples)]
+unique(duplicates)
+```
+
+```{r}
+clinicData <- read.delim("/Users/shubhamagrawal/Desktop/ALL/data/highRiskALL_Clinical_Transcriptomics_Proteomics_mapped_metadata_available_samples.csv", sep = ",")
+colnames(clinicData)[which(names(clinicData) == "Diagnosis.Relapse")] <- "diagnosisType"
+head(clinicData)
+length(unique(clinicData$Sample_ID_Submitted))
+```
+```{r}
+clinicData$matched.pairs[clinicData$Protein_Sample_ID == "S97"] <- "different mouse number but same patient as 101"
+```
+
+```{r}
+clinicData <- arrange(clinicData, desc(matched.pairs))
+head(clinicData$matched.pairs, 30)
+head(clinicData$Protein_Sample_ID, 30)
+```
+
+
+
+```{r}
+patID <- c("p1", "p2", 
+           "p3", "p4", 
+           "p5", "p3", 
+           "p6", "p7", 
+           "p6", "p7", 
+           "p8", "p9", 
+           "p9", "p10", 
+           "p5", "p11", 
+           "p4", "p12", 
+           "p10", "p2",
+           "p2", "p2",
+           "p11", "p13",
+           "p13", "p12",
+           "p14", "p14",
+           paste0("p", seq(15, 98)))
+clinicData$patID <- patID
+
+```
+
+```{r}
+length(clinicData$patID)
+length(unique(clinicData$patID))
+```
+
+
+```{r}
+all(clinicData$Sample_ID_Submitted == clinicData$RNA_Sample_ID_Available)
+```
+
+
+```{r}
+setdiff(samples, clinicData$Sample_ID_Submitted)
+setdiff(clinicData$Sample_ID_Submitted, samples)
+```
+
+```{r}
+samples <- colnames(countMat)
+coldata <- data.frame(samples)
+rownames(coldata) <- colnames(countMat)
+head(coldata)
+all(rownames(coldata) == colnames(countMat))
+samples <- str_split_fixed(coldata$samples, "_pdx[1-2]", 2)[,1]
+samples <- str_split_fixed(samples, "_2", 2)[,1]
+coldata$temp <- samples
+tail(coldata)
+```
+
+```{r}
+head(coldata)
+```
+
+```{r}
+head(clinicData)
+```
+
+
+
+
+```{r}
+# Create col data
+annotationData <- left_join(coldata, clinicData, by = c("temp" = "Sample_ID_Submitted"))
+rownames(annotationData) <- annotationData$samples
+colnames(annotationData)[which(names(annotationData) == "Cytogenetics")] <- "cytogenetics"
+head(annotationData)
+
+annotationData <- annotationData %>% 
+  mutate(
+    diseaseType = case_when(
+      Immunophenoytpe %in% c("T-ALL", "T-ALL ", "T-LBL/T-ALL") ~ "T-ALL",
+      Immunophenoytpe == "B-ALL" ~ "B-ALL",
+      Immunophenoytpe == "Sample contaminated, needs to be excluded " ~ "contaminated"
+    ),
+    riskGroup = case_when(
+      Risk.group %in% c("HR", "HR ") ~ "High Risk",
+      Risk.group %in% c("SR", "SR ") ~ "Standard Risk",
+      Risk.group %in% c("MR", "MR ") ~ "Middle Risk",
+      Risk.group %in% c("no HR", "non HR ") ~ "non High Risk",
+      Risk.group %in% c(".", NA) ~ NA,
+      Risk.group == "VHR" ~ "Very High Risk"
+    ),
+    predictionResponse = case_when(
+      Pred.resp. %in% c("Pred. poor", "Pred. Poor") ~ "poor",
+      Pred.resp. %in% c("Pred. good", "Pred. Good") ~ "good",
+      .default = NA
+    ),
+    diagnosisType = case_when(
+      diagnosisType == "Diagnosis" ~ "Primary",
+      diagnosisType == "Relapse" ~ "Relapse"
+    )
+  )
+
+annotationData$cytogenetics[annotationData$cytogenetics == ""] <- "Normal Karyo"
+annotationData[annotationData == ""] <- NA
+annotationData <- subset(annotationData,select = -c(RNA_Sample_ID_Available, 
+                                                    Immunophenoytpe, ZNS,
+                                                    WES_Sample_ID, 
+                                                    Risk.group, Pred.resp., 
+                                                    Risiko.MRD, Remarks,
+                                                    Calculated.site.of.relapse, 
+                                                    Timepoint.of.relapse, 
+                                                    matched.pairs))
+all(rownames(annotationData) == colnames(countMat))
+head(annotationData)
+```
+```{r}
+annotationData[is.na(annotationData$patID), ]
+```
+
+
+```{r}
+length(annotationData$patID)
+length(unique(annotationData$patID))
+```
+# Row data 
+
+```{r}
+rowAnn <- df[, c("gene_id", "name", "X.chrom")]
+rowAnn$gene_id <- str_split_fixed(rowAnn$gene_id, "\\.", n = 2)[,1]
+colnames(rowAnn)[which(names(rowAnn) == "X.chrom")] <- "chromosome"
+dim(rowAnn)
+
+rowAnn <- distinct(rowAnn)
+rownames(rowAnn) <- rowAnn$gene_id
+dim(rowAnn)
+head(rowAnn)
+```
+
+
+```{r}
+library(SummarizedExperiment)
+# create the SummarizedExperiment object
+se <- SummarizedExperiment(assays = list(Counts = countMat), rowData = rowAnn, 
+                           colData = annotationData)
+se
+```
+
+```{r}
+library(DESeq2)
+dds <- DESeqDataSet(se, design = ~ 1)
+dds
+```
+
+```{r}
+saveRDS(dds, file = "dds.Rds")
+```
+

@@ -1,0 +1,309 @@
+---
+title: "ALL TranscriptomicsQC"
+author: "Shubham Agrawal"
+date: "2025-07-14"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dev = c("png","pdf"), fig.path = "./ALLTranscriptomicsQC/")
+library(tidyverse)
+library(DESeq2)
+library(ggrepel)
+source("helper.R")
+```
+
+# Upload the object
+
+```{r, message=FALSE}
+dds <- readRDS("/Users/shubhamagrawal/Desktop/ALL/dds.Rds")
+dds
+```
+
+
+# Pre-Filtering
+
+Objectives:
+- by removing rows in which there are very few reads, we reduce the memory size of the dds data object, and we increase the speed of count modeling within DESeq2
+- it can also improve visualizations, as features with no information for differential expression are not plotted in dispersion plots or MA-plots.
+
+Here we perform pre-filtering to keep only rows that have a count of at least 10 for a minimal number of samples.
+
+```{r}
+dim(dds)
+# remove genes never expressed
+#dds <- dds[rowSums(counts(dds)) != 0,]
+smallestGroupSize <- 100
+keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
+dds <- dds[keep, ]
+dim(dds)
+```
+
+```{r}
+plotBoxInstensities(se = dds)
+```
+
+# Perform vst
+
+```{r}
+ddsVst <- varianceStabilizingTransformation(dds)
+```
+
+```{r}
+plotBoxInstensities(se = ddsVst)
+```
+
+```{r}
+plotHeatDDS(dds = ddsVst)
+```
+
+```{r}
+pcaData <- DESeq2::plotPCA(ddsVst, intgroup=c("diseaseType", "diagnosisType", "Duplicate_RNA_Sample_Available."), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(PC1, PC2, color=diseaseType, shape=diagnosisType)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+
+ggplot(pcaData, aes(PC1, PC2, color=diseaseType, shape=diagnosisType, label=Duplicate_RNA_Sample_Available.)) +
+  geom_point(size=3) +
+  #geom_text_repel(aes(label = ifelse(expression %in% c("Up", "Down"), as.character(Gene),"")), max.overlaps = Inf) +
+  geom_label() +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+```
+
+Points to note from the PCA and heatmap:
+1. PCA group T-ALL and B-ALL into distinct clusters. Good.
+2. Sample swapping. Some T-ALL samples are in the B-ALL cluster and same for 
+some B-All samples
+4. One sample is contaminated: OE0583_T-ALL_5892
+3. Replicate samples are next to each other. Remove the replicates.
+
+# Removing replicate and contaminated samples
+
+```{r}
+contaminated <- "OE0583_T-ALL_5892"
+dds <- dds[, dds$temp != contaminated]
+dds
+```
+
+```{r}
+# Subset dds to keep only replicate samples
+ddsReplicate <- dds[, !is.na(dds$Duplicate_RNA_Sample_Available.)]
+
+# Get sample IDs from colData
+sample_ids <- ddsReplicate$Duplicate_RNA_Sample_Available.
+
+# Get total counts per sample (library size)
+total_counts <- colSums(counts(ddsReplicate))
+
+# Combine into a data frame
+df_counts <- data.frame(
+  sampleID = sample_ids,
+  totalCounts = total_counts,
+  colname = colnames(ddsReplicate)
+)
+
+# For each sampleID, keep the column name with lowest total counts
+removeSamples <- df_counts %>%
+  group_by(sampleID) %>%
+  slice_min(order_by = totalCounts, n = 1, with_ties = FALSE) %>%
+  pull(colname)
+
+# remove the replicates with the lower counts
+ddsFiltered <- dds[, !colnames(dds) %in% removeSamples]
+ddsFiltered
+```
+```{r}
+saveRDS(ddsFiltered, file = "ddsFiltered.Rds")
+```
+
+
+# Check the plots again
+
+```{r}
+ddsFilteredVst <- varianceStabilizingTransformation(ddsFiltered)
+```
+
+```{r}
+plotBoxInstensities(se = ddsFilteredVst)
+```
+
+```{r}
+plotHeatDDS(dds = ddsFilteredVst)
+```
+```{r}
+pcaDataFiltered <- DESeq2::plotPCA(ddsFilteredVst, intgroup=c("diseaseType", "diagnosisType", "Duplicate_RNA_Sample_Available."), returnData=TRUE)
+percentVar <- round(100 * attr(pcaDataFiltered, "percentVar"))
+ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+
+ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType, label=Duplicate_RNA_Sample_Available.)) +
+  geom_point(size=3) +
+  #geom_text_repel(aes(label = ifelse(expression %in% c("Up", "Down"), as.character(Gene),"")), max.overlaps = Inf) +
+  geom_label() +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+```
+
+Check different CD markers to find if the labelling is correct or not
+
+B-ALL: CD19, CD20, CD10, CD22, CD79A, CD34, CD38
+T-ALL: CD2, CD3, CD5, CD7, CD8 or CD4, CD1A, CD44, CD99
+
+```{r}
+# Suppose your DESeq2 dataset is named `dds`
+# Get the count matrix (raw or normalized)
+ddsFiltered1 <- ddsFiltered[, !is.na(ddsFiltered$diseaseType)]
+counts_mat <- counts(ddsFiltered1)
+counts_mat <- log2(counts_mat + 1)
+
+# Extract gene annotation (rowData)
+gene_anno <- as.data.frame(rowData(ddsFiltered1))
+
+# Example: list of CD markers of interest
+cd_genes <- c("CD19", "CD20", "CD22", "CD10", "CD3", "CD7", "CD5", "CD2", "CD4", "CD8A", "CD8B", "CD1A")
+
+# Find rows corresponding to these gene names
+selected_genes <- gene_anno %>%
+  filter(name %in% cd_genes)
+
+# selected_genes <- gene_anno %>%
+#   filter(grepl("^CD[0-9]+", name, ignore.case = TRUE))
+
+# Subset the normalized counts matrix for these genes
+cd_counts <- counts_mat[rownames(counts_mat) %in% selected_genes$gene_id, ]
+
+# (Optional) rename rows to gene names for clarity
+rownames(cd_counts) <- selected_genes$name[
+  match(rownames(cd_counts), selected_genes$gene_id)]
+
+# Extract disease type information for annotation
+sample_anno <- as.data.frame(colData(ddsFiltered1)) %>%
+  select(diseaseType)
+
+# # Create the heatmap
+# pheatmap(cd_counts,
+#          scale = "row",                  # z-score scaling across genes
+#          annotation_col = sample_anno,   # adds diseaseType annotation
+#          show_rownames = TRUE,
+#          cluster_cols = TRUE,
+#          cluster_rows = TRUE,
+#          fontsize_row = 10,
+#          fontsize_col = 9,
+#          main = "CD Marker Expression Heatmap")
+
+
+pheatmap(cd_counts,
+         scale = "row",
+         annotation_col = sample_anno,
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+         main = "CD Marker Expression by Disease Type")
+
+
+
+```
+
+
+# Association tests for the PCs
+
+```{r}
+pca <- stats::prcomp(t(assay(ddsFilteredVst)), center = TRUE, scale. = TRUE)
+resPCA <-  as.data.frame(pca$x)
+resPCA <- resPCA[ , 1:25]
+resPCA$samples <- rownames(pca$x)
+cd <- as.data.frame(colData(ddsFilteredVst))
+cd <- subset(cd, select = -c(Duplicate_RNA_Sample_Available., 
+                             Protein_Sample_ID, temp, patID))
+
+resAssc <- testAssociation(tabX = resPCA, tabY = cd, joinID = "samples", 
+                           correlation_method = "pearson", 
+                           plot = TRUE, pCut = 0.01, ifFdr = FALSE, pMax = 12, 
+                           onlySignificant = FALSE)
+
+p <- resAssc$plot
+p
+```
+
+# Subsetting the transcriptomics samples based on disease
+
+```{r}
+ddsFilteredVst <- ddsFilteredVst[, !is.na(ddsFilteredVst$diseaseType) &
+                                   !is.na(ddsFilteredVst$diagnosisType)]
+print("Filtered Vst B-ALL")
+ddsB <- ddsFilteredVst[, ddsFilteredVst$diseaseType == "B-ALL"]
+ddsB
+print("Filtered Vst T-ALL")
+ddsT <- ddsFilteredVst[, ddsFilteredVst$diseaseType == "T-ALL"]
+ddsT
+```
+```{r}
+pcaB <- DESeq2::plotPCA(ddsB, intgroup=c("diagnosisType", "Duplicate_RNA_Sample_Available."), returnData=TRUE)
+percentVar <- round(100 * attr(pcaB, "percentVar"))
+ggplot(pcaB, aes(PC1, PC2, color=diagnosisType)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed() +
+  ggtitle("PCA for transcriptomics B-ALL data")
+```
+```{r}
+pcaT <- DESeq2::plotPCA(ddsT, intgroup=c("diagnosisType", "Duplicate_RNA_Sample_Available."), returnData=TRUE)
+percentVar <- round(100 * attr(pcaT, "percentVar"))
+ggplot(pcaT, aes(PC1, PC2, color=diagnosisType)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed() +
+  ggtitle("PCA for transcriptomics T-ALL data")
+```
+
+```{r}
+pca <- stats::prcomp(t(assay(ddsB)), center = TRUE, scale. = TRUE)
+resPCA <-  as.data.frame(pca$x)
+resPCA <- resPCA[ , 1:25]
+resPCA$samples <- rownames(pca$x)
+cd <- as.data.frame(colData(ddsB))
+cd <- subset(cd, select = -c(Duplicate_RNA_Sample_Available., 
+                             Protein_Sample_ID, temp, patID))
+
+resAssc <- testAssociation(tabX = resPCA, tabY = cd, joinID = "samples", 
+                           correlation_method = "pearson", 
+                           plot = TRUE, pCut = 0.01, ifFdr = FALSE, pMax = 12, 
+                           onlySignificant = FALSE)
+
+p <- resAssc$plot
+p
+```
+
+```{r}
+pca <- stats::prcomp(t(assay(ddsT)), center = TRUE, scale. = TRUE)
+resPCA <-  as.data.frame(pca$x)
+resPCA <- resPCA[ , 1:25]
+resPCA$samples <- rownames(pca$x)
+cd <- as.data.frame(colData(ddsT))
+cd <- subset(cd, select = -c(Duplicate_RNA_Sample_Available., 
+                             Protein_Sample_ID, temp, patID))
+
+resAssc <- testAssociation(tabX = resPCA, tabY = cd, joinID = "samples", 
+                           correlation_method = "pearson", 
+                           plot = TRUE, pCut = 0.01, ifFdr = FALSE, pMax = 12, 
+                           onlySignificant = FALSE)
+
+p <- resAssc$plot
+p
+```
+
+```{r}
+ddsFilteredVst
+```
+
