@@ -1,0 +1,131 @@
+---
+title: "checkIDs"
+author: "Shubham Agrawal"
+date: "2026-06-01"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(SummarizedExperiment)
+library(DESeq2)
+```
+
+# Read the counts txt file
+
+```{r}
+RNAdata <- read.delim("/Users/shubhamagrawal/Desktop/ALL/data/highRiskALL_Clinical_Transcriptomics_Proteomics_mapped_metadata_available_samples.csv", sep = ",")
+head(RNAdata)
+```
+
+```{r}
+library(readxl)
+WESdata <- read_excel("/Users/shubhamagrawal/Desktop/ALL/data/wes/metadata_bb_final.xlsx")
+head(WESdata)
+```
+
+```{r}
+length(intersect(RNAdata$Sample_ID_Submitted, WESdata$sampleID))
+```
+```{r}
+drpDataLong <- read.delim("/Users/shubhamagrawal/Desktop/ALL/data/Rank_Drugs_cleaned_only25_copy.csv", sep = ",")
+head(drpDataLong)
+
+# drpData <- drpDataLong %>%
+#   pivot_wider(
+#     id_cols = c(Labeling.proteomics, sample_id),
+#     names_from = drug,
+#     values_from = susceptibility_logAUC
+#   ) %>%
+#   arrange(Labeling.proteomics)
+# head(drpData)
+```
+
+```{r}
+proteomicID <- unique(drpDataLong$Labeling.proteomics)
+length(proteomicID)
+proteomicID <- paste0("S", proteomicID)
+head(proteomicID)
+```
+```{r}
+length(intersect(proteomicID, WESdata$Protein_Sample_ID))
+```
+
+```{r}
+WESdataSub <- WESdata[!is.na(WESdata$Column4), c("sampleID", "correct sample ID", "Column4", "disease_stage","Protein_Sample_ID", "matched.pairs",  "immunophenotype")]
+WESdataSub
+```
+# Load the data
+
+```{r}
+seProt <- readRDS("objects/protoemics.Rds")
+dds <- readRDS("objects/ddsFiltered.Rds")
+seDRP <- readRDS("objects/drpObject.Rds")
+```
+
+# Create unique identifier
+
+Get the colData from dds and drp objects
+```{r}
+cdProt <- as.data.frame(colData(seProt))
+#head(cdProt)
+cdDDS <- as.data.frame(colData(dds))
+#head(cdDDS)
+cdDDS <- select(cdDDS, samples, patID, Protein_Sample_ID)
+cdDRP <- as.data.frame(colData(seDRP))
+#head(cdDRP)
+cdDRP <- select(cdDRP, Labeling.proteomics, sample_id)
+
+cdjoin <- left_join(cdProt, cdDDS, by = c("sample" = "Protein_Sample_ID"))
+cdjoin <- left_join(cdjoin, cdDRP, by = c("sample" = "Labeling.proteomics"))
+cdjoin <- left_join(cdjoin, WESdata, by = c("sample" = "Protein_Sample_ID"))
+cdjoin <- cdjoin[!duplicated(cdjoin$sample), ]
+```
+ S24, S33, S63, S74
+
+```{r}
+cdFinal <- cdjoin[!duplicated(cdjoin$sample), ]
+dim(cdFinal)
+names(cdFinal)[names(cdFinal) == "sample"] <- "protSample"
+names(cdFinal)[names(cdFinal) == "samples"] <- "rnaSample"
+names(cdFinal)[names(cdFinal) == "sample_id"] <- "drugSample"
+names(cdFinal)[names(cdFinal) == "correct sample ID"] <- "wesSample"
+```
+
+```{r}
+if (!"sample" %in% colnames(cdFinal)) cdFinal$sample <- as.character(seq_len(nrow(cdFinal)))
+rownames(cdFinal) <- cdFinal$sample
+commonSamples <- cdFinal$sample
+head(cdFinal)
+```
+
+```{r}
+cdFinalOrder <- cdFinal[, c(1, 9, 11, 13, 12, 10, 33, 2, 3, 6, 17, 18)]
+names(cdFinalOrder)[names(cdFinalOrder) == "sampleID"] <- "sampleID_wes"
+names(cdFinalOrder)[names(cdFinalOrder) == "Sex.x"] <- "sex"
+names(cdFinalOrder)[names(cdFinalOrder) == "Column4"] <- "column4_wes"
+names(cdFinalOrder)[names(cdFinalOrder) == "immunophenotype"] <- "diseaseType_wes"
+names(cdFinalOrder)[names(cdFinalOrder) == "disease_stage"] <- "diagnosisType_wes"
+head(cdFinalOrder, 10)
+```
+
+```{r}
+write.csv(cdFinalOrder, "ALL_metadata_combined_05062026.csv")
+```
+
+
+```{r}
+setdiff(WESdata$`correct sample ID`, cdFinalOrder$wesSample)
+```
+
+```{r}
+duplicated(WESdata$`correct sample ID`)
+```
+
+```{r}
+duplicated(cdFinalOrder$wesSample)
+```
+
