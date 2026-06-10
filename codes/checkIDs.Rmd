@@ -80,20 +80,26 @@ cdDRP <- as.data.frame(colData(seDRP))
 cdDRP <- select(cdDRP, Labeling.proteomics, sample_id)
 
 cdjoin <- left_join(cdProt, cdDDS, by = c("sample" = "Protein_Sample_ID"))
+dim(cdjoin)
 cdjoin <- left_join(cdjoin, cdDRP, by = c("sample" = "Labeling.proteomics"))
-cdjoin <- left_join(cdjoin, WESdata, by = c("sample" = "Protein_Sample_ID"))
-cdjoin <- cdjoin[!duplicated(cdjoin$sample), ]
+dim(cdjoin)
+cdjoin <- full_join(cdjoin, WESdata, by = c("sample" = "Protein_Sample_ID"))
+#cdjoin <- cdjoin[!duplicated(cdjoin$sample), ]
+dim(cdjoin)
 ```
  S24, S33, S63, S74
 
 ```{r}
-cdFinal <- cdjoin[!duplicated(cdjoin$sample), ]
+#cdFinal <- cdjoin[!duplicated(cdjoin$sample), ]
+cdFinal <- cdjoin
 dim(cdFinal)
 names(cdFinal)[names(cdFinal) == "sample"] <- "protSample"
 names(cdFinal)[names(cdFinal) == "samples"] <- "rnaSample"
 names(cdFinal)[names(cdFinal) == "sample_id"] <- "drugSample"
 names(cdFinal)[names(cdFinal) == "correct sample ID"] <- "wesSample"
 ```
+
+
 
 ```{r}
 if (!"sample" %in% colnames(cdFinal)) cdFinal$sample <- as.character(seq_len(nrow(cdFinal)))
@@ -113,7 +119,7 @@ head(cdFinalOrder, 10)
 ```
 
 ```{r}
-write.csv(cdFinalOrder, "ALL_metadata_combined_05062026.csv")
+write.csv(cdFinalOrder, "ALL_metadata_combined_10062026.csv")
 ```
 
 
@@ -122,10 +128,49 @@ setdiff(WESdata$`correct sample ID`, cdFinalOrder$wesSample)
 ```
 
 ```{r}
-duplicated(WESdata$`correct sample ID`)
+cdjoinFull <- full_join(cdProt, cdDDS, by = c("sample" = "Protein_Sample_ID"))
+cdjoinFull <- full_join(cdjoinFull, cdDRP, by = c("sample" = "Labeling.proteomics"))
+cdjoinFull <- full_join(cdjoinFull, WESdata, by = c("sample" = "Protein_Sample_ID"))
+#cdjoinFull <- cdjoinFull[!duplicated(cdjoinFull$sample), ]
+dim(cdjoinFull)
 ```
 
 ```{r}
-duplicated(cdFinalOrder$wesSample)
+cdFinalFull <- cdjoinFull
+dim(cdFinal)
+names(cdFinalFull)[names(cdFinalFull) == "sample"] <- "protSample"
+names(cdFinalFull)[names(cdFinalFull) == "samples"] <- "rnaSample"
+names(cdFinalFull)[names(cdFinalFull) == "sample_id"] <- "drugSample"
+names(cdFinalFull)[names(cdFinalFull) == "correct sample ID"] <- "wesSample"
+head(cdFinalFull)
 ```
+
+```{r}
+cdFinalOrder <- cdFinalFull[, c(1, 9, 11, 13, 12, 10, 33, 2, 3, 6, 17, 18)]
+names(cdFinalOrder)[names(cdFinalOrder) == "sampleID"] <- "sampleID_wes"
+names(cdFinalOrder)[names(cdFinalOrder) == "Sex.x"] <- "sex"
+names(cdFinalOrder)[names(cdFinalOrder) == "Column4"] <- "column4_wes"
+names(cdFinalOrder)[names(cdFinalOrder) == "immunophenotype"] <- "diseaseType_wes"
+names(cdFinalOrder)[names(cdFinalOrder) == "disease_stage"] <- "diagnosisType_wes"
+head(cdFinalOrder, 10)
+```
+
+```{r}
+write.csv(cdFinalOrder, "ALL_metadata_combined_FULL_10062026.csv")
+```
+
+```{r, message=FALSE}
+ddsOG <- readRDS("/Users/shubhamagrawal/Desktop/ALL/objects/dds.Rds")
+ddsOG
+```
+
+```{r}
+cts <- counts(ddsOG)
+```
+
+```{r}
+head(cts[, "OE0583_T-ALL_3302_pdx1"])
+head(cts[, "OE0583_T-ALL_3303_pdx2"])
+```
+
 
