@@ -1,0 +1,213 @@
+---
+title: "Analysing Drug Response Profile data"
+author: "Shubham Agrawal"
+date: "2025-09-04"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(pheatmap)
+source("helper.R")
+```
+
+# Read the counts txt file
+
+```{r}
+drpDataLong <- read.delim("/Users/shubhamagrawal/Desktop/ALL/data/Rank_Drugs_cleaned_only25_copy.csv", sep = ",")
+head(drpDataLong)
+```
+
+```{r}
+drpData <- drpDataLong %>%
+  pivot_wider(
+    id_cols = c(Labeling.proteomics, sample_id),
+    names_from = drug,
+    values_from = susceptibility_logAUC
+  ) %>%
+  arrange(Labeling.proteomics)
+head(drpData)
+```
+
+```{r}
+# Set row names to sampleID, drop proteome_id
+rownames(drpData) <- as.character(drpData$sample_id)
+drpData2 <- drpData[ , !(names(drpData) %in% c("Labeling.proteomics", "sample_id"))]
+
+# Transpose
+drpDataT <- t(drpData2)
+
+# Convert back to data.frame if needed
+drpDataT <- as.data.frame(drpDataT)
+colnames(drpDataT) <- as.character(drpData$sample_id)
+
+# Row names are drugs, column names are samples
+head(drpDataT)
+```
+
+```{r}
+se <- readRDS("protoemics.Rds")
+se
+cd <- as.data.frame(colData(se))
+head(cd)
+```
+
+```{r}
+df <- drpData[, 1:2]
+df$Labeling.proteomics <- paste0("S", df$Labeling.proteomics)
+df$sample_id <- as.character(df$sample_id)
+head(df)
+
+annData <- left_join(df, cd, by = c("Labeling.proteomics" = "sample"))
+rownames(annData) <- annData$sample_id
+head(annData)
+```
+
+# Create a summarized object
+
+```{r}
+se <- SummarizedExperiment(assays = list(logAUC = drpDataT),  
+                           colData = annData)
+se
+```
+
+```{r}
+saveRDS(se, file = "drpObject.Rds")
+```
+
+
+```{r, include=FALSE}
+mat <- drpData %>%
+  select(-Labeling.proteomics, -sample_id) %>%
+  as.matrix()
+
+rownames(mat) <- drpData$Labeling.proteomics   # label rows by sample
+
+pheatmap(mat,
+         scale = "none",             # z-score normalize per drug
+         color = colorRampPalette(c("magenta", "white", "darkgreen"))(50),
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",
+         na_col = "darkgrey",              # show missing drugs as grey
+         main = "Susceptibility logAUC Heatmap (Samples × Drugs)")
+```
+
+```{r}
+mat <- assay(se)
+
+pheatmap(mat,
+         scale = "none",             # z-score normalize per drug
+         color = colorRampPalette(c("magenta", "white", "darkgreen"))(100),
+         clustering_distance_cols = "euclidean",
+         cluster_rows = FALSE,
+         clustering_method = "complete",
+         na_col = "darkgrey",              # show missing drugs as grey
+         main = "Susceptibility logAUC Heatmap (Samples × Drugs)")
+```
+
+```{r}
+annotationCol <- c("diagnosisType", "diseaseType")
+cd <- as.data.frame(colData(se))
+
+# Prepare column annotations from the metadata
+if (!is.null(annotationCol)) {
+    annCol <- cd[row.names(cd) %in% colnames(se), ][c(annotationCol)]
+    row.names(annCol) <- colnames(se)
+} else {
+    annCol <- NA
+}
+
+pheatmap(assay(se),
+         scale = "none",             # z-score normalize per drug
+         color = colorRampPalette(c("magenta", "white", "darkgreen"))(100),
+         cluster_rows = FALSE,
+         cutree_cols = 2,
+         clustering_method = "complete",
+         na_col = "darkgrey",              # show missing drugs as grey
+         annotation_col = annCol,
+         main = "Susceptibility logAUC Heatmap (Samples × Drugs)")
+```
+```{r}
+seBALL <- se[, se$diseaseType == "B-ALL"]
+seBALL
+seTALL <- se[, se$diseaseType == "T-ALL"]
+seTALL
+```
+
+
+```{r}
+annotationCol <- "diagnosisType"
+cdB <- as.data.frame(colData(seBALL))
+matB <- assay(seBALL)
+
+# Prepare column annotations from the metadata
+if (!is.null(annotationCol)) {
+    annCol <- cdB[row.names(cdB) %in% colnames(seBALL), ][c(annotationCol)]
+    row.names(annCol) <- colnames(seBALL)
+} else {
+    annCol <- NA
+}
+
+pheatmap(matB,
+         scale = "none",             # z-score normalize per drug
+         color = colorRampPalette(c("magenta", "white", "darkgreen"))(100),
+         cluster_rows = FALSE,
+         cutree_cols = 3,
+         clustering_method = "complete",
+         na_col = "darkgrey",              # show missing drugs as grey
+         annotation_col = annCol,
+         main = "Susceptibility logAUC Heatmap (Samples × Drugs)")
+```
+
+```{r}
+annotationCol <- "diagnosisType"
+cdT <- as.data.frame(colData(seTALL))
+matT <- assay(seTALL)
+
+# Prepare column annotations from the metadata
+if (!is.null(annotationCol)) {
+    annColT <- cdT[row.names(cdT) %in% colnames(seTALL), ][c(annotationCol)]
+    row.names(annColT) <- colnames(seTALL)
+} else {
+    annCol <- NA
+}
+
+pheatmap(matT,
+         scale = "none",             # z-score normalize per drug
+         color = colorRampPalette(c("magenta", "white", "darkgreen"))(100),
+         cluster_rows = FALSE,
+         cutree_cols = 2,
+         clustering_method = "complete",
+         na_col = "darkgrey",              # show missing drugs as grey
+         annotation_col = annColT,
+         main = "Susceptibility logAUC Heatmap (Samples × Drugs)")
+```
+
+
+```{r}
+drpDataClass <- drpData %>%
+  mutate(across(
+    .cols = -c(Labeling.proteomics, sample_id),   # keep identifiers & exclude non-drug numeric col
+    .fns = ~ case_when(
+      .x < 0.2 ~ "Sensitive",
+      .x >= 0.2 & .x <= 0.75 ~ "Intermediate",
+      .x > 0.75 ~ "Resistant",
+      TRUE ~ NA_character_
+    ),
+    .names = "{.col}_class"
+  ))
+
+
+head(drpDataClass)
+```
+
+
+
+
+
+
+

@@ -1,0 +1,386 @@
+---
+title: "Drug Response Prediction"
+author: "Shubham Agrawal"
+date: "2026-01-28"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(SummarizedExperiment)
+library(tidyverse)
+library(DESeq2)
+library(glmnet)
+library(RColorBrewer)
+library(reshape2)
+```
+
+# Load the data
+
+```{r}
+seProt <- readRDS("protoemics.Rds")
+dds <- readRDS("ddsFiltered.Rds")
+seDRP <- readRDS("drpObject.Rds")
+```
+
+# Get only T-ALL
+
+```{r}
+seProt <- seProt[, seProt$diseaseType == "T-ALL"]
+print("Proteomics T-ALL data")
+seProt
+dds <- dds[, !is.na(dds$diseaseType) & !is.na(dds$diagnosisType)]
+dds <- dds[, dds$diseaseType == "T-ALL"]
+print("Transcriptomics T-ALL data")
+dds
+seDRP <- seDRP[, seDRP$diseaseType == "T-ALL"]
+print("Drug Response Profile T-ALL data")
+seDRP
+```
+
+# Create unique identifier
+
+Get the colData from dds and drp objects
+```{r}
+cdProt <- as.data.frame(colData(seProt))
+#head(cdProt)
+cdDDS <- as.data.frame(colData(dds))
+#head(cdDDS)
+cdDDS <- select(cdDDS, samples, patID, Protein_Sample_ID)
+cdDRP <- as.data.frame(colData(seDRP))
+#head(cdDRP)
+cdDRP <- select(cdDRP, Labeling.proteomics, sample_id)
+
+cdjoin <- left_join(cdProt, cdDDS, by = c("sample" = "Protein_Sample_ID"))
+cdjoin <- left_join(cdjoin, cdDRP, by = c("sample" = "Labeling.proteomics"))
+cdjoin <- cdjoin[!duplicated(cdjoin$sample), ]
+```
+ S24, S33, S63, S74
+ 
+```{r}
+cdFinal <- cdjoin[!duplicated(cdjoin$sample), ]
+dim(cdFinal)
+names(cdFinal)[names(cdFinal) == "sample"] <- "protSample"
+names(cdFinal)[names(cdFinal) == "samples"] <- "rnaSample"
+names(cdFinal)[names(cdFinal) == "sample_id"] <- "drugSample"
+```
+
+```{r}
+if (!"sample" %in% colnames(cdFinal)) cdFinal$sample <- as.character(seq_len(nrow(cdFinal)))
+rownames(cdFinal) <- cdFinal$sample
+commonSamples <- cdFinal$sample
+```
+
+# Normalize RNAseq data
+
+```{r}
+minrs <- 100
+rs  <- rowSums(assay(dds))
+dds <- dds[rs >= minrs, ]
+dds
+# variance stabilize the data
+# (includes normalizing for library size and dispsersion estimation) 
+vsd <- varianceStabilizingTransformation(dds)
+# no NAs in data
+any(is.na(assay(vsd)))
+```
+```{r}
+# helper to align a matrix to common_samples given the sample_map mapping
+alignView <- function(mat, from_ids, mapping_df, common_ids, colname_in_map) {
+  # mat: original matrix (rows = features, cols = samples, colnames = sample IDs used in mat)
+  # from_ids: character vector of sample IDs in mat (should equal colnames(mat))
+  # mapping_df: the sample_map data.frame
+  # common_ids: mapping_df$commonID
+  # colname_in_map: column name in mapping_df that links to this view (e.g. "prot_sample")
+  out <- matrix(NA_real_, nrow = nrow(mat), ncol = length(common_ids),
+                dimnames = list(rownames(mat), as.character(common_ids)))
+  # for each row in mapping, if sample exists in mat, copy column
+  for (i in seq_along(common_ids)) {
+    mapped_name <- mapping_df[[colname_in_map]][i]
+    if (!is.na(mapped_name) && mapped_name %in% colnames(mat)) {
+      out[, i] <- mat[, mapped_name]
+    } else {
+      # leave NA column
+    }
+  }
+  return(out)
+}
+
+# Proteomics view (assay might already be normalized, imputed)
+protMat <- as.matrix(assay(seProt))  
+# ensure colnames are the sample names used in sample_map$prot_sample
+protView <- alignView(protMat, colnames(protMat), cdFinal, commonSamples, "protSample")
+
+# Drug view (logAUC)
+drugMat <- as.matrix(assay(seDRP))      # rows = drugs, cols = sampleIDs (drug sampleIDs)
+drugView <- alignView(drugMat, colnames(drugMat), cdFinal, commonSamples, "drugSample")
+
+# RNA counts view: use normalized counts assay from DESeq2 object
+countsMat <- as.matrix(assay(vsd))
+rnaView <- alignView(countsMat, colnames(countsMat), cdFinal, commonSamples, "rnaSample")
+
+# Optional: sanity check dims and names
+dim(protView); dim(rnaView); dim(drugView)
+colnames(protView)  # should be common_samples (or same vector across views)
+```
+
+# Feature selection and filtering
+
+```{r}
+selectTopVar <- function(mat, topN = 2000) {
+  varVec <- matrixStats::rowVars(mat, na.rm = TRUE)
+  keep <- order(varVec, decreasing = TRUE)[seq_len(min(topN, sum(!is.na(varVec))))]
+  mat[keep, , drop = FALSE]
+}
+
+rnaViewFilt <- selectTopVar(rnaView, topN = 3000)     
+protViewFilt <- selectTopVar(protView, topN = 2000)
+drugViewFilt <- drugView   # usually small number of drugs
+```
+
+# Identify valid samples
+
+```{r}
+valid_samples <- Reduce(intersect, list(
+  colnames(rnaViewFilt)[colSums(!is.na(rnaViewFilt)) > 0],
+  colnames(protViewFilt)[colSums(!is.na(protViewFilt)) > 0],
+  colnames(drugViewFilt)[colSums(!is.na(drugViewFilt)) > 0],
+  rownames(cdFinal)
+))
+```
+
+Subset all data:
+
+```{r}
+rna <- rnaViewFilt[, valid_samples]
+prot <- protViewFilt[, valid_samples]
+drug <- drugViewFilt[, valid_samples]
+clin <- cdFinal[valid_samples, ]
+```
+
+# Extract Sex and Age and diagnosisType from clinical data
+
+```{r}
+clin$Sex[is.na(clin$Sex)] <- "Unknown"
+clin$Sex <- factor(clin$Sex, levels = c("Female", "Male", "Unknown"))
+sex_mat <- model.matrix(~ Sex - 1, data = clin)
+```
+
+```{r}
+clin$Age <- as.numeric(clin$Age)
+clin$Age[is.na(clin$Age)] <- median(clin$Age, na.rm = TRUE)
+age_scaled <- scale(clin$Age)
+colnames(age_scaled) <- "Age"
+```
+
+```{r}
+
+clin$diagnosisType <- factor(clin$diagnosisType, levels = c("Primary", "Relapse"))
+diagnosis_mat <- model.matrix(~ diagnosisType - 1, data = clin)
+```
+
+```{r}
+clinMat <- cbind(
+  Age = age_scaled,
+  Sex = sex_mat,
+  Diagnosis = diagnosis_mat
+)
+```
+
+# Use top 20 PCs of expression and proteomics data
+
+```{r}
+pcaExpr<-prcomp(t(rna), center=T, scale. = F)
+rnaPCs<-pcaExpr$x[,1:20]
+colnames(rnaPCs) <- paste("rna",colnames(rnaPCs), sep="")
+```
+
+```{r}
+pcaProt<-prcomp(t(prot), center=T, scale. = F)
+protPCs<-pcaProt$x[,1:20]
+colnames(protPCs) <- paste("prot",colnames(protPCs), sep="")
+```
+
+# Choose ONE Drug (Response Variable)
+
+```{r}
+# drug_name <- rownames(drug)[10]   # choose drug
+# y <- as.numeric(drug[drug_name, ])
+# names(y) <- colnames(drug)
+```
+
+```{r}
+# Remove samples with missing Y:
+# keep <- !is.na(y)
+# y <- y[keep]
+# rna <- rnaPCs[keep, ]
+# prot <- protPCs[keep, ]
+# clin <- clinMat[keep, ]
+```
+
+```{r}
+ZPCs<-list(transcriptomics=rnaPCs,
+        proteomics=protPCs, 
+        demographics=clinMat)
+ZPCs$all<-do.call(cbind, ZPCs)
+ZPCsunscaled<-ZPCs
+ZPCsscaled<-lapply(ZPCs, scale)
+lapply(ZPCsscaled, colnames)
+```
+Define colors.
+
+```{r}
+set1 <- brewer.pal(9,"Set1")
+colMod<-c(paste(set1[c(1,5,2)],"88",sep=""), "grey")
+names(colMod) <-
+  c("demographics", "transcriptomics", "proteomics", "all")
+```
+
+```{r}
+#Function to calculate Var Explained for Penalized Regression
+R2ForPenRegPlusViz <- function(Z, drugviab, nfolds=10, alpha=1, nrep=100,
+                      Parmfrow=c(2,4), ylimMax=0.4, standardize=TRUE) {
+  Zlocal<-Z
+
+  set.seed(1030)
+  seeds<-sample(1:10000000, nrep)
+
+  RepeatedR2list<-lapply(1:nrep, function(outer){
+  # Use same folds for all omics to make comparable
+  set.seed(seeds[outer])
+  foldsAssignment<-sample(rep(seq(nfolds), length=ncol(drugviab)))
+
+  R2echOmicadj<-sapply(rownames(drugviab), function(dname) {
+    
+    # filter out samples where drug response is missing
+    d <- as.numeric(drugviab[dname, ])
+    names(d) <- colnames(drugviab)
+    keep <- !is.na(d)
+    d <- d[keep]
+    Zlocal$transcriptomics <- Zlocal$transcriptomics[keep, ]
+    Zlocal$proteomics <- Zlocal$proteomics[keep, ]
+    Zlocal$demographics <- Zlocal$demographics[keep, ]
+    Zlocal$all <- Zlocal$all[keep, ]
+    
+    
+    
+    sapply(names(Zlocal), function(nameZ) {
+      pred<-Zlocal[[nameZ]]
+      #fit a lasso model for omics with more than one features
+      if(ncol(pred)>1){
+      fitcv<-cv.glmnet(pred,d,family="gaussian", standardize=standardize,
+                        alpha=alpha)
+      R2 <- 1-min(fitcv$cvm)/fitcv$cvm[1]
+      
+      
+      }
+      else {#fit a liner model for single feautres (IGHV)
+        fitlm<-lm(d~., data.frame(pred))
+        R2 <- summary(fitlm)$r.squared
+      }
+      R2
+    })
+  }
+    )
+})
+RepeatedR2<-RepeatedR2list
+#calculate mean and sd across repetitions with different folds
+meanR2<-apply(simplify2array(RepeatedR2), 1:2, mean)
+sdR2<-apply(simplify2array(RepeatedR2), 1:2, sd)
+
+par(mfrow=Parmfrow, mar=c(7,5,3,3))
+for (i in 1: ncol(meanR2)) {
+    barc<-barplot(meanR2[,i], main= colnames(meanR2)[i], ylim=c(0,ylimMax),
+                  las=2, col=colMod[rownames(meanR2)], ylab="R2")
+    segments(barc, meanR2[,i]-sdR2[,i],barc, meanR2[,i]+sdR2[,i])
+}
+RepeatedR2
+}
+```
+
+Fit model and show resulting omic-prediction profiles.
+```{r}
+resultLassoPCA<-R2ForPenRegPlusViz(Z = ZPCsscaled, drugviab = drug, nfold=10, alpha=1,
+                                   nrep=100, ylimMax=0.4)
+
+```
+
+```{r, fig.path="./figureDRP/", dev=c("png", "pdf"), fig.width=9, fig.height=8}}
+df_resultLassoPCA <- melt(resultLassoPCA)
+colnames(df_resultLassoPCA) <- c("omic", "drug", "R2", "run")
+summaryR2 <- df_resultLassoPCA %>% group_by(omic, drug) %>% 
+  dplyr::summarise(meanR2=mean(R2),sdR2 = sd(R2), nR2 = length(R2)) %>%
+  mutate(seR2 = sdR2/sqrt(nR2))
+
+ggplot(summaryR2, aes(x=omic, y=meanR2, fill=omic, group=omic))+
+    geom_bar(stat = "identity") +  scale_fill_manual(values=colMod) + 
+    geom_errorbar(aes(ymax = meanR2 + sdR2,ymin = meanR2 - sdR2), position = "dodge", width = 0.25) +facet_wrap(~drug, ncol=4) +theme_bw(base_size = 18) +ylab(bquote(R^2)) + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.text = element_text(colour = "black")) +xlab("")+guides(fill=guide_legend(title="Data type")) 
+```
+
+```{r}
+resultLassoPCA5 <-R2ForPenRegPlusViz(Z = ZPCsscaled, drugviab = drug, nfolds=5, alpha=1,
+                                   nrep=100, ylimMax=0.2)
+
+```
+
+```{r, fig.path="./figureDRP/", dev=c("png", "pdf"), fig.width=9, fig.height=8}}
+df_resultLassoPCA5 <- melt(resultLassoPCA5)
+colnames(df_resultLassoPCA5) <- c("omic", "drug", "R2", "run")
+summaryR25 <- df_resultLassoPCA5 %>% group_by(omic, drug) %>% 
+  dplyr::summarise(meanR2=mean(R2),sdR2 = sd(R2), nR2 = length(R2)) %>%
+  mutate(seR2 = sdR2/sqrt(nR2))
+
+ggplot(summaryR25, aes(x=omic, y=meanR2, fill=omic, group=omic))+
+    geom_bar(stat = "identity") +  scale_fill_manual(values=colMod) + 
+    geom_errorbar(aes(ymax = meanR2 + sdR2,ymin = meanR2 - sdR2), position = "dodge", width = 0.25) +facet_wrap(~drug, ncol=4) +theme_bw(base_size = 18) +ylab(bquote(R^2)) + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.text = element_text(colour = "black")) +xlab("")+guides(fill=guide_legend(title="Data type")) 
+```
+
+```{r}
+resultLassoPCA5 <-R2ForPenRegPlusViz(Z = ZPCsscaled, drugviab = drug, nfolds=3, alpha=1,
+                                   nrep=100, ylimMax=0.3)
+```
+
+
+```{r}
+X <- cbind(
+  rna,
+  prot,
+  clin
+)
+
+stopifnot(!anyNA(X))
+```
+
+```{r}
+fit <- cv.glmnet(
+  x = X,
+  y = y,
+  alpha = 1,           # LASSO
+  family = "gaussian",
+  standardize = FALSE  # already scaled
+)
+
+R2 <- 1-min(fit$cvm)/fit$cvm[1]
+
+R2
+```
+
+```{r, include=FALSE, eval=FALSE}
+fit <- cv.glmnet(
+  x = rna,
+  y = y,
+  alpha = 1,           # LASSO
+  family = "gaussian",
+  standardize = FALSE  # already scaled
+)
+
+R2 <- 1-min(fit$cvm)/fit$cvm[1]
+R2
+```
+
+
+
+
+
