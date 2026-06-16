@@ -1,0 +1,82 @@
+---
+title: "Whole Exome Sequencing"
+author: "Shubham Agrawal"
+date: "2026-06-16"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+```
+
+```{r}
+wes <- read_excel("/Users/shubhamagrawal/Desktop/ALL/data/wes/combined_report.xlsx")
+head(wes, 20)
+```
+
+```{r}
+snv_mat <- wes %>%
+  mutate(
+    SNV = ifelse(is.na(SNV_Consequence), 0, 1)
+  ) %>%
+  select(Sample, Gene, SNV) %>%
+  pivot_wider(
+    names_from = Sample,
+    values_from = SNV,
+    values_fill = 0
+  )
+
+head(snv_mat)
+```
+
+```{r}
+unique(wes$Copy_Number)
+```
+
+
+```{r}
+cnv_mat <- wes %>%
+  mutate(
+    CN = case_when(
+      !is.na(Copy_Number) ~ Copy_Number,
+      TRUE ~ 2
+    )
+  ) %>%
+  select(Sample, Gene, CN) %>%
+  pivot_wider(
+    names_from = Sample,
+    values_from = CN,
+    values_fill = 2
+  )
+
+cnv_mat <- as.matrix(cnv_mat[,-1])
+rownames(cnv_mat) <- cnv_mat[,1]
+
+head(cnv_mat)
+```
+
+```{r}
+cnv_long <- wes %>%
+  mutate(
+    DEL = as.integer(grepl("DEL", Combined_class)),
+    DUP = as.integer(grepl("DUP", Combined_class))
+  ) %>%
+  select(Sample, Gene, DEL, DUP) %>%
+  pivot_longer(
+    cols = c(DEL, DUP),
+    names_to = "CNV_type",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Feature = paste(Gene, CNV_type, sep = "_")
+  )
+```
+
+```{r}
+
+```
+
