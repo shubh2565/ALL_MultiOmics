@@ -1,0 +1,237 @@
+---
+title: "Mofa analysis B-ALL"
+author: "Shubham Agrawal"
+date: "2025-09-15"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(SummarizedExperiment)
+library(tidyverse)
+library(DESeq2)
+library(MOFA2)
+```
+
+# Load the data and extract T-ALL samples only
+
+```{r}
+seProt <- readRDS("protoemics.Rds")
+print("Proteomics data")
+seProt
+dds <- readRDS("ddsFiltered.Rds")
+print("Transcriptomics data")
+dds
+seDRP <- readRDS("drpObject.Rds")
+print("Drug Response Profile data")
+seDRP
+```
+
+```{r}
+seProtB <- seProt[, seProt$diseaseType == "B-ALL"]
+print("Proteomics B-ALL data")
+seProtB
+dds <- dds[, !is.na(dds$diseaseType) & !is.na(dds$diagnosisType)]
+ddsB <- dds[, dds$diseaseType == "B-ALL"]
+print("Transcriptomics B-ALL data")
+ddsB
+seDrpB <- seDRP[, seDRP$diseaseType == "B-ALL"]
+print("Drug Response Profile B-ALL data")
+seDrpB
+```
+
+# Create unique identifier
+
+Get the colData from dds and drp objects
+```{r}
+cdProt <- as.data.frame(colData(seProtB))
+#head(cdProt)
+cdDDS <- as.data.frame(colData(ddsB))
+#head(cdDDS)
+cdDDS <- select(cdDDS, samples, patID, Protein_Sample_ID)
+cdDRP <- as.data.frame(colData(seDrpB))
+#head(cdDRP)
+cdDRP <- select(cdDRP, Labeling.proteomics, sample_id)
+
+cdjoin <- left_join(cdProt, cdDDS, by = c("sample" = "Protein_Sample_ID"))
+cdjoin <- left_join(cdjoin, cdDRP, by = c("sample" = "Labeling.proteomics"))
+cdjoin <- cdjoin[!duplicated(cdjoin$sample), ]
+```
+
+```{r}
+cdFinal <- cdjoin[!duplicated(cdjoin$sample), ]
+dim(cdFinal)
+names(cdFinal)[names(cdFinal) == "sample"] <- "protSample"
+names(cdFinal)[names(cdFinal) == "samples"] <- "rnaSample"
+names(cdFinal)[names(cdFinal) == "sample_id"] <- "drugSample"
+```
+
+```{r}
+if (!"sample" %in% colnames(cdFinal)) cdFinal$sample <- as.character(seq_len(nrow(cdFinal)))
+rownames(cdFinal) <- cdFinal$sample
+commonSamples <- cdFinal$sample
+```
+
+# Normalize RNAseq data
+
+The model can handle three types of data: continuous (modelled with a gaussian likelihood), small counts (modelled with a Poisson likelihood) and binary measurements (modelled with a bernoulli likelihood). Non-gaussian likelihoods give non-optimal results, we recommend the user to apply data transformations to obtain continuous measurements. For example, for count-based data such as RNA-seq or ATAC-seq we recommend size factor normalisation + variance stabilisation (i.e. a log transformation).
+
+```{r}
+ddsB <- DESeq2::estimateSizeFactors(ddsB)
+vsdB <- DESeq2::varianceStabilizingTransformation(ddsB) 
+```
+
+
+# Create feature × sample matrices for each view (fill NAs for missing samples)
+
+MOFA expects views as lists of matrices with rows as features and columns as 
+samples (same columns across views). Therefore, create a column for every 
+commonSamples, filling NA for samples missing in a view.
+
+```{r}
+# helper to align a matrix to common_samples given the sample_map mapping
+alignView <- function(mat, from_ids, mapping_df, common_ids, colname_in_map) {
+  # mat: original matrix (rows = features, cols = samples, colnames = sample IDs used in mat)
+  # from_ids: character vector of sample IDs in mat (should equal colnames(mat))
+  # mapping_df: the sample_map data.frame
+  # common_ids: mapping_df$commonID
+  # colname_in_map: column name in mapping_df that links to this view (e.g. "prot_sample")
+  out <- matrix(NA_real_, nrow = nrow(mat), ncol = length(common_ids),
+                dimnames = list(rownames(mat), as.character(common_ids)))
+  # for each row in mapping, if sample exists in mat, copy column
+  for (i in seq_along(common_ids)) {
+    mapped_name <- mapping_df[[colname_in_map]][i]
+    if (!is.na(mapped_name) && mapped_name %in% colnames(mat)) {
+      out[, i] <- mat[, mapped_name]
+    } else {
+      # leave NA column
+    }
+  }
+  return(out)
+}
+
+# Proteomics view (assay might already be normalized, imputed)
+protMat <- as.matrix(assay(seProtB))  
+# ensure colnames are the sample names used in sample_map$prot_sample
+protView <- alignView(protMat, colnames(protMat), cdFinal, commonSamples, "protSample")
+
+# Drug view (logAUC)
+drugMat <- as.matrix(assay(seDrpB))      # rows = drugs, cols = sampleIDs (drug sampleIDs)
+drugView <- alignView(drugMat, colnames(drugMat), cdFinal, commonSamples, "drugSample")
+
+# RNA counts view: use normalized counts assay from DESeq2 object
+countsMat <- as.matrix(assay(vsdB))
+rnaView <- alignView(countsMat, colnames(countsMat), cdFinal, commonSamples, "rnaSample")
+
+# Optional: sanity check dims and names
+dim(protView); dim(rnaView); dim(drugView)
+colnames(protView)  # should be common_samples (or same vector across views)
+```
+
+# Feature selection and filtering
+
+```{r}
+selectTopVar <- function(mat, topN = 2000) {
+  varVec <- matrixStats::rowVars(mat, na.rm = TRUE)
+  keep <- order(varVec, decreasing = TRUE)[seq_len(min(topN, sum(!is.na(varVec))))]
+  mat[keep, , drop = FALSE]
+}
+
+rnaViewFilt <- selectTopVar(rnaView, topN = 3000)     
+protViewFilt <- selectTopVar(protView, topN = 2000)
+drugViewFilt <- drugView   # usually small number of drugs
+```
+
+# Create the MOFA data list and MOFA object
+
+```{r}
+dataList <- list(
+  Proteomics = protViewFilt,
+  Transcriptomics = rnaViewFilt,
+  Drug = drugViewFilt
+)
+
+# Create MOFA object
+mofaObj <- create_mofa(dataList)
+```
+```{r}
+plot_data_overview(mofaObj) +
+  theme(text = element_text(size = 20, face = 'bold'))
+```
+
+# Set data / model / training options
+
+```{r}
+dataOpts   <- get_default_data_options(mofaObj)
+modelOpts  <- get_default_model_options(mofaObj)
+trainOpts  <- get_default_training_options(mofaObj)
+
+modelOpts$num_factors <- 10   
+trainOpts$maxiter <- 1000
+```
+
+# Prepare and run the MOFA model
+
+```{r, message=FALSE}
+# Prepare the MOFA object for training
+mofaPrepared <- prepare_mofa(mofaObj,
+                             data_options = dataOpts,
+                             model_options = modelOpts,
+                             training_options = trainOpts)
+
+# Run (this will create an HDF5 file and train the model)
+trainedMofa <- run_mofa(mofaPrepared, outfile = "mofaTrainedBALL.hdf5",
+                        use_basilisk = TRUE)
+```
+
+# Add metadata to the model
+
+```{r}
+cdFinalsub <- subset(cdFinal, select =  -c(diseaseType))
+samples_metadata(trainedMofa) <- cdFinalsub
+```
+
+# Visualizations
+
+```{r}
+plot_variance_explained(trainedMofa, x="view", y="factor")
+```
+```{r}
+plot_variance_explained(trainedMofa, plot_total = TRUE)[[2]]
+```
+```{r}
+plot_factor_cor(trainedMofa)
+```
+```{r}
+plot_factors(trainedMofa, 
+  factors = 1:5,
+  color_by = "diagnosisType"
+)
+```
+
+```{r}
+correlate_factors_with_covariates(trainedMofa, 
+  covariates = c("diagnosisType", "Sex", "Age", "cytogenetics", 
+                 "riskGroup", "predictionResponse"), 
+  plot="log_pval"
+)
+```
+```{r}
+plot_top_weights(trainedMofa,
+ view = "Transcriptomics",
+ factor = 1,
+ nfeatures = 20,     # Top number of features to highlight
+ scale = T           # Scale weights from -1 to 1
+)
+```
+```{r}
+plot_factor(trainedMofa, 
+  factors = 1, 
+  color_by = "diagnosisType",
+  add_violin = TRUE,
+  dodge = TRUE
+)
+```
+
