@@ -1,0 +1,84 @@
+---
+title: "Mofa Analysis New"
+author: "Shubham Agrawal"
+date: "2026-06-17"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(SummarizedExperiment)
+library(tidyverse)
+library(DESeq2)
+library(MOFA2)
+library(readxl)
+```
+
+# Load the data
+
+```{r}
+seProt <- readRDS("objects/protoemics.Rds")
+dds <- readRDS("objects/ddsFiltered.Rds")
+seDRP <- readRDS("objects/drpObject.Rds")
+```
+
+# Create unique identifier
+
+Get the colData from dds and drp objects
+```{r}
+cdProt <- as.data.frame(colData(seProt))
+#head(cdProt)
+cdDDS <- as.data.frame(colData(dds))
+#head(cdDDS)
+cdDDS <- select(cdDDS, samples, patID, Protein_Sample_ID)
+cdDRP <- as.data.frame(colData(seDRP))
+#head(cdDRP)
+cdDRP <- select(cdDRP, Labeling.proteomics, sample_id)
+
+cdjoin <- left_join(cdProt, cdDDS, by = c("sample" = "Protein_Sample_ID"))
+cdjoin <- left_join(cdjoin, cdDRP, by = c("sample" = "Labeling.proteomics"))
+cdjoin <- cdjoin[!duplicated(cdjoin$sample), ]
+```
+ S24, S33, S63, S74
+
+```{r}
+cdFinal <- cdjoin[!duplicated(cdjoin$sample), ]
+dim(cdFinal)
+names(cdFinal)[names(cdFinal) == "sample"] <- "protSample"
+names(cdFinal)[names(cdFinal) == "samples"] <- "rnaSample"
+names(cdFinal)[names(cdFinal) == "sample_id"] <- "drugSample"
+```
+
+```{r}
+if (!"sample" %in% colnames(cdFinal)) cdFinal$sample <- as.character(seq_len(nrow(cdFinal)))
+rownames(cdFinal) <- cdFinal$sample
+commonSamples <- cdFinal$sample
+```
+
+```{r}
+head(cdFinal)
+```
+
+```{r}
+combinedMetadata <- read_csv("/Users/shubhamagrawal/Desktop/ALL/ALL_metadata_combined_11062026.csv")
+head(combinedMetadata)
+```
+
+```{r}
+duplicated(combinedMetadata$protSample)
+```
+
+```{r}
+duplicated(combinedMetadata$protSample) & !is.na(combinedMetadata$protSample)
+```
+
+```{r}
+combinedMetadata1 <- combinedMetadata[! (duplicated(combinedMetadata$protSample) &  !is.na(combinedMetadata$protSample)), ]
+```
+
+```{r}
+duplicated(combinedMetadata1$wesSample)
+```
+
