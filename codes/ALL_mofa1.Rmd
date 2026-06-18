@@ -79,6 +79,268 @@ combinedMetadata1 <- combinedMetadata[! (duplicated(combinedMetadata$protSample)
 ```
 
 ```{r}
-duplicated(combinedMetadata1$wesSample)
+duplicated(combinedMetadata1$rnaSample) & !is.na(combinedMetadata1$rnaSample)
+```
+```{r}
+duplicated(combinedMetadata1$drugSample) & !is.na(combinedMetadata1$drugSample)
+```
+
+```{r}
+duplicated(combinedMetadata1$wesSample) & !is.na(combinedMetadata1$wesSample)
+```
+```{r}
+x <- combinedMetadata1$wesSample
+unique(x[duplicated(x) & !is.na(x)])
+```
+```{r}
+combinedMetadata2 <- combinedMetadata1[! (duplicated(combinedMetadata1$wesSample) &  !is.na(combinedMetadata1$wesSample)), ]
+```
+
+```{r}
+dim(combinedMetadata2)
+head(combinedMetadata2)
+```
+
+```{r}
+if (!"sample" %in% colnames(combinedMetadata2)) combinedMetadata2$sample <- as.character(seq_len(nrow(combinedMetadata2)))
+rownames(combinedMetadata2) <- combinedMetadata2$sample
+commonSamples <- combinedMetadata2$sample
+```
+
+```{r}
+head(combinedMetadata2)
+```
+```{r}
+head(cdFinal)
+```
+
+```{r}
+finalMetadata <- combinedMetadata2 %>% select(protSample, rnaSample, drugSample, wesSample, sex, diseaseType, diagnosisType, sample) %>%
+  left_join(
+    cdFinal %>% select(protSample, Age, cytogenetics, riskGroup, predictionResponse),
+    by = "protSample"
+  )
+
+head(finalMetadata)
+```
+
+```{r}
+dds <- DESeq2::estimateSizeFactors(dds)
+vsd <- DESeq2::varianceStabilizingTransformation(dds) 
+```
+
+```{r}
+wes <- read_excel("/Users/shubhamagrawal/Desktop/ALL/data/wes/combined_report.xlsx")
+head(wes)
+```
+```{r}
+snv <- wes %>%
+  mutate(
+    SNV = ifelse(is.na(SNV_Consequence), 0, 1)
+  ) %>%
+  select(Sample, Gene, SNV) %>%
+  pivot_wider(
+    names_from = Sample,
+    values_from = SNV,
+    values_fill = 0
+  )
+
+head(snv)
+dim(snv)
+```
+
+```{r}
+snv <- as.data.frame(snv)
+rownames(snv) <- snv$Gene
+snv$Gene <- NULL
+head(snv)
+```
+
+```{r}
+cnv_long <- wes %>%
+  mutate(
+    DEL = as.integer(grepl("DEL", Combined_class)),
+    DUP = as.integer(grepl("DUP", Combined_class))
+  ) %>%
+  select(Sample, Gene, DEL, DUP) %>%
+  pivot_longer(
+    cols = c(DEL, DUP),
+    names_to = "CNV_type",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Feature = paste(Gene, CNV_type, sep = "_")
+  )
+```
+
+```{r}
+cnv_binary <- cnv_long %>%
+  select(Feature, Sample, Value) %>%
+  pivot_wider(
+    names_from = Sample,
+    values_from = Value,
+    values_fill = 0
+  )
+
+head(cnv_binary)
+```
+
+```{r}
+cnv_binary_df <- as.data.frame(cnv_binary)
+
+rownames(cnv_binary_df) <- cnv_binary_df$Feature
+cnv_binary_df$Feature <- NULL
+
+head(cnv_binary_df)
+```
+
+```{r}
+cnv_binary_df[] <- lapply(cnv_binary_df, as.numeric)
+```
+
+```{r}
+dim(cnv_binary_df)
+# filter out low frequency events
+event_freq <- rowSums(cnv_binary_df)
+cnv_binary_filt <- cnv_binary_df[event_freq >= 2, ]
+dim(cnv_binary_filt)
+```
+
+
+
+```{r}
+# helper to align a matrix to common_samples given the sample_map mapping
+alignView <- function(mat, from_ids, mapping_df, common_ids, colname_in_map) {
+  # mat: original matrix (rows = features, cols = samples, colnames = sample IDs used in mat)
+  # from_ids: character vector of sample IDs in mat (should equal colnames(mat))
+  # mapping_df: the sample_map data.frame
+  # common_ids: mapping_df$commonID
+  # colname_in_map: column name in mapping_df that links to this view (e.g. "prot_sample")
+  out <- matrix(NA_real_, nrow = nrow(mat), ncol = length(common_ids),
+                dimnames = list(rownames(mat), as.character(common_ids)))
+  # for each row in mapping, if sample exists in mat, copy column
+  for (i in seq_along(common_ids)) {
+    mapped_name <- mapping_df[[colname_in_map]][i]
+    if (!is.na(mapped_name) && mapped_name %in% colnames(mat)) {
+      out[, i] <- mat[, mapped_name]
+    } else {
+      # leave NA column
+    }
+  }
+  return(out)
+}
+
+```
+
+```{r}
+# WES SNV view 
+snv_mat <- as.matrix(snv)  
+snvView <- alignView(snv_mat, colnames(snv_mat), finalMetadata, commonSamples, "wesSample")
+```
+
+```{r}
+# WES CNV view 
+cnv_mat <- as.matrix(cnv_binary_filt)  
+cnvView <- alignView(cnv_mat, colnames(cnv_mat), finalMetadata, commonSamples, "wesSample")
+```
+
+
+```{r}
+# Proteomics view (assay might already be normalized, imputed)
+protMat <- as.matrix(assay(seProt))  
+# ensure colnames are the sample names used in sample_map$prot_sample
+protView <- alignView(protMat, colnames(protMat), finalMetadata, commonSamples, "protSample")
+
+# Drug view (logAUC)
+drugMat <- as.matrix(assay(seDRP))      # rows = drugs, cols = sampleIDs (drug sampleIDs)
+drugView <- alignView(drugMat, colnames(drugMat), cdFinal, commonSamples, "drugSample")
+
+# RNA counts view: use normalized counts assay from DESeq2 object
+countsMat <- as.matrix(assay(vsd))
+rnaView <- alignView(countsMat, colnames(countsMat), cdFinal, commonSamples, "rnaSample")
+```
+```{r}
+# Optional: sanity check dims and names
+dim(protView); dim(rnaView); dim(drugView); dim(snvView) ; dim(cnvView)
+colnames(protView)  # should be common_samples (or same vector across views)
+```
+
+# Feature selection and filtering
+
+```{r}
+selectTopVar <- function(mat, topN = 2000) {
+  varVec <- matrixStats::rowVars(mat, na.rm = TRUE)
+  keep <- order(varVec, decreasing = TRUE)[seq_len(min(topN, sum(!is.na(varVec))))]
+  mat[keep, , drop = FALSE]
+}
+
+rnaViewFilt <- selectTopVar(rnaView, topN = 3000)     
+protViewFilt <- selectTopVar(protView, topN = 2000)
+drugViewFilt <- drugView   # usually small number of drugs
+snvViewFilt <- snvView
+cnvViewFilt <- cnvView # already filtered
+```
+
+# Create the MOFA data list and MOFA object
+
+```{r}
+dataListX <- list(
+  Proteomics = protView,
+  Transcriptomics = rnaView,
+  Drug = drugView,
+  SNV = snvView,
+  CNV = cnvView
+)
+
+# Create MOFA object
+mofaObjX <- create_mofa(dataListX)
+plot_data_overview(mofaObjX) +
+  theme(text = element_text(size = 20, face = 'bold'))
+```
+
+```{r}
+dataList <- list(
+  Proteomics = protViewFilt,
+  Transcriptomics = rnaViewFilt,
+  Drug = drugViewFilt,
+  SNV = snvViewFilt,
+  CNV = cnvViewFilt
+)
+
+# Create MOFA object
+mofaObj <- create_mofa(dataList)
+```
+```{r}
+plot_data_overview(mofaObj) +
+  theme(text = element_text(size = 20, face = 'bold'))
+```
+# Set data / model / training options
+
+```{r}
+dataOpts   <- get_default_data_options(mofaObj)
+modelOpts  <- get_default_model_options(mofaObj)
+trainOpts  <- get_default_training_options(mofaObj)
+
+modelOpts$num_factors <- 15   
+trainOpts$maxiter <- 1000
+trainOpts$convergence_mode <- "slow"
+trainOpts$seed <- 42
+```
+
+Important: make sure the modelOpts$likelihoods order exactly matches the order 
+of dataList.
+
+# Prepare and run the MOFA model
+
+```{r}
+# Prepare the MOFA object for training
+mofaPrepared <- prepare_mofa(mofaObj,
+                             data_options = dataOpts,
+                             model_options = modelOpts,
+                             training_options = trainOpts)
+
+# Run (this will create an HDF5 file and train the model)
+trainedMofa <- run_mofa(mofaPrepared, outfile = "mofaFullTrained.hdf5",
+                        use_basilisk = TRUE)
 ```
 
