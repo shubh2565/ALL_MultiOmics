@@ -125,84 +125,27 @@ head(finalMetadata)
 ```
 
 ```{r}
+write.csv(finalMetadata, "finalMetadata_Mofa.csv", row.names = FALSE)
+```
+
+
+```{r}
 dds <- DESeq2::estimateSizeFactors(dds)
 vsd <- DESeq2::varianceStabilizingTransformation(dds) 
 ```
 
 ```{r}
-wes <- read_excel("/Users/shubhamagrawal/Desktop/ALL/data/wes/combined_report.xlsx")
-head(wes)
-```
-```{r}
-snv <- wes %>%
-  mutate(
-    SNV = ifelse(is.na(SNV_Consequence), 0, 1)
-  ) %>%
-  select(Sample, Gene, SNV) %>%
-  pivot_wider(
-    names_from = Sample,
-    values_from = SNV,
-    values_fill = 0
-  )
-
-head(snv)
-dim(snv)
+snv <- readRDS("snvWES.rds")
+cnv <- readRDS("cnvWES.rds")
 ```
 
-```{r}
-snv <- as.data.frame(snv)
-rownames(snv) <- snv$Gene
-snv$Gene <- NULL
-head(snv)
-```
+
 
 ```{r}
-cnv_long <- wes %>%
-  mutate(
-    DEL = as.integer(grepl("DEL", Combined_class)),
-    DUP = as.integer(grepl("DUP", Combined_class))
-  ) %>%
-  select(Sample, Gene, DEL, DUP) %>%
-  pivot_longer(
-    cols = c(DEL, DUP),
-    names_to = "CNV_type",
-    values_to = "Value"
-  ) %>%
-  mutate(
-    Feature = paste(Gene, CNV_type, sep = "_")
-  )
-```
-
-```{r}
-cnv_binary <- cnv_long %>%
-  select(Feature, Sample, Value) %>%
-  pivot_wider(
-    names_from = Sample,
-    values_from = Value,
-    values_fill = 0
-  )
-
-head(cnv_binary)
-```
-
-```{r}
-cnv_binary_df <- as.data.frame(cnv_binary)
-
-rownames(cnv_binary_df) <- cnv_binary_df$Feature
-cnv_binary_df$Feature <- NULL
-
-head(cnv_binary_df)
-```
-
-```{r}
-cnv_binary_df[] <- lapply(cnv_binary_df, as.numeric)
-```
-
-```{r}
-dim(cnv_binary_df)
+dim(cnv)
 # filter out low frequency events
-event_freq <- rowSums(cnv_binary_df)
-cnv_binary_filt <- cnv_binary_df[event_freq >= 2, ]
+event_freq <- rowSums(cnv)
+cnv_binary_filt <- cnv[event_freq >= 2, ]
 dim(cnv_binary_filt)
 ```
 
@@ -343,4 +286,57 @@ mofaPrepared <- prepare_mofa(mofaObj,
 trainedMofa <- run_mofa(mofaPrepared, outfile = "mofaFullTrained.hdf5",
                         use_basilisk = TRUE)
 ```
+
+# Load Mofa model 
+
+```{r}
+trainedMofa <- load_model("mofaFullTrained.hdf5")
+```
+
+# Add metadata to the model
+
+```{r}
+samples_metadata(trainedMofa) <- finalMetadata
+```
+
+# Correlation between factors
+
+A good sanity check is to verify that the Factors are largely uncorrelated. In MOFA there are no orthogonality constraints such as in Principal Component Analysis, but if there is a lot of correlation between Factors this suggests a poor model fit. Reasons? Perhaps you used too many factors or perhaps the normalization is not adequate. [Link](https://raw.githack.com/bioFAM/MOFA2_tutorials/master/R_tutorials/CLL.html#correlation-between-factors)
+
+```{r}
+plot_factor_cor(trainedMofa)
+```
+
+# Plot variance decomposition
+
+This plot shows the percentage of variance explained by each factor across each 
+data modality (and group, if provided). It summarises the sources of variation 
+from a complex heterogeneous data set in a single figure.
+
+```{r}
+plot_variance_explained(trainedMofa, x="view", y="factor")
+```
+
+```{r}
+plot_variance_explained(trainedMofa, plot_total = TRUE)[[2]]
+```
+
+# Characterisation of Factors
+
+[Source](https://raw.githack.com/bioFAM/MOFA2_tutorials/master/R_tutorials/CLL.html#characterisation-of-factor-1)
+There are a few systematic strategies to characterize the molecular etiology underlying the MOFA Factors and to relate them to the sample covariates:
+
+- Association analysis between the sample metadata and the Factor values.
+- Inspection of factor values.
+- Inspection of the feature weights.
+- Gene set enrichment analysis on the mRNA weights.
+
+```{r}
+plot_factor(trainedMofa, 
+  factors = 1, 
+  color_by = "diseaseType"
+)
+```
+
+From the plot, it's evident that some samples have incorrect annotation for the diseaseType. 
 
