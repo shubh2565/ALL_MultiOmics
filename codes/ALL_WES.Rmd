@@ -15,7 +15,7 @@ library(readxl)
 
 ```{r}
 wes <- read_excel("/Users/shubhamagrawal/Desktop/ALL/data/wes/combined_report.xlsx")
-head(wes, 20)
+head(wes)
 ```
 
 ```{r}
@@ -34,33 +34,17 @@ head(snv_mat)
 dim(snv_mat)
 ```
 
-
+```{r}
+snv <- as.data.frame(snv_mat)
+rownames(snv) <- snv$Gene
+snv$Gene <- NULL
+head(snv)
+```
 
 ```{r}
 unique(wes$Copy_Number)
 ```
 
-
-```{r}
-cnv_mat <- wes %>%
-  mutate(
-    CN = case_when(
-      !is.na(Copy_Number) ~ Copy_Number,
-      TRUE ~ 2
-    )
-  ) %>%
-  select(Sample, Gene, CN) %>%
-  pivot_wider(
-    names_from = Sample,
-    values_from = CN,
-    values_fill = 2
-  )
-
-cnv_mat <- as.matrix(cnv_mat[,-1])
-rownames(cnv_mat) <- cnv_mat[,1]
-
-head(cnv_mat)
-```
 
 ```{r}
 cnv_long <- wes %>%
@@ -107,10 +91,17 @@ cnv_binary_df[] <- lapply(cnv_binary_df, as.numeric)
 ```
 
 ```{r}
+saveRDS(snv, "snvWES.rds")
+saveRDS(cnv_binary_df, "cnvWES.rds")
+```
+
+
+
+```{r}
 dim(cnv_binary_df)
 # filter out low frequency events
 event_freq <- rowSums(cnv_binary_df)
-cnv_binary_filt <- cnv_binary_df[event_freq >= 3, ]
+cnv_binary_filt <- cnv_binary_df[event_freq >= 2, ]
 dim(cnv_binary_filt)
 ```
 
@@ -143,4 +134,14 @@ cnv_values <- wes2 %>%
 head(cnv_values)
 ```
 
+```{r}
+cnv_values <- as.data.frame(cnv_values)
+rownames(cnv_values) <- cnv_values$Gene
+cnv_values$Gene <- NULL
+head(cnv_values)
+```
+
+```{r}
+saveRDS(cnv_values, "cnvRealValues.Rds")
+```
 
