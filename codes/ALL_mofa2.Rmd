@@ -1,0 +1,302 @@
+---
+title: "MOFA T-ALL"
+author: "Shubham Agrawal"
+date: "2026-06-19"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(SummarizedExperiment)
+library(tidyverse)
+library(DESeq2)
+library(MOFA2)
+library(readxl)
+source("helper.R")
+```
+
+# Load the data
+
+```{r}
+seProt <- readRDS("objects/protoemics.Rds")
+dds <- readRDS("objects/ddsFiltered.Rds")
+seDRP <- readRDS("objects/drpObject.Rds")
+```
+
+```{r}
+snv <- readRDS("snvWES.rds")
+cnv <- readRDS("cnvWES.rds")
+```
+
+# Load the metadata file
+
+```{r}
+metadataMofa <- read_csv("finalMetadata_Mofa.csv")
+head(metadataMofa)
+```
+# Filter for T-ALL
+
+```{r}
+dim(metadataMofa)
+metadataTall <- metadataMofa[metadataMofa$diseaseType == "T-ALL", ]
+dim(metadataTall)
+metadataTall$drugSample <- as.character(metadataTall$drugSample)
+metadataTall$sample <- as.character(metadataTall$sample)
+```
+# Normalize or filter the omics assays
+
+```{r}
+dds <- DESeq2::estimateSizeFactors(dds)
+vsd <- DESeq2::varianceStabilizingTransformation(dds) 
+```
+
+```{r}
+dim(cnv)
+# filter out low frequency events
+event_freq <- rowSums(cnv)
+cnv_binary_filt <- cnv[event_freq >= 3, ]
+dim(cnv_binary_filt)
+```
+```{r}
+# helper to align a matrix to common_samples given the sample_map mapping
+alignView <- function(mat, from_ids, mapping_df, common_ids, colname_in_map) {
+  # mat: original matrix (rows = features, cols = samples, colnames = sample IDs used in mat)
+  # from_ids: character vector of sample IDs in mat (should equal colnames(mat))
+  # mapping_df: the sample_map data.frame
+  # common_ids: mapping_df$commonID
+  # colname_in_map: column name in mapping_df that links to this view (e.g. "prot_sample")
+  out <- matrix(NA_real_, nrow = nrow(mat), ncol = length(common_ids),
+                dimnames = list(rownames(mat), as.character(common_ids)))
+  # for each row in mapping, if sample exists in mat, copy column
+  for (i in seq_along(common_ids)) {
+    mapped_name <- mapping_df[[colname_in_map]][i]
+    if (!is.na(mapped_name) && mapped_name %in% colnames(mat)) {
+      out[, i] <- mat[, mapped_name]
+    } else {
+      # leave NA column
+    }
+  }
+  return(out)
+}
+
+```
+
+```{r}
+commonSamples <- metadataTall$sample
+```
+
+```{r}
+# WES SNV view 
+snv_mat <- as.matrix(snv)  
+snvView <- alignView(snv_mat, colnames(snv_mat), metadataTall, commonSamples, "wesSample")
+```
+
+```{r}
+# WES CNV view 
+cnv_mat <- as.matrix(cnv_binary_filt)  
+cnvView <- alignView(cnv_mat, colnames(cnv_mat), metadataTall, commonSamples, "wesSample")
+```
+
+
+
+```{r}
+# Proteomics view (assay might already be normalized, imputed)
+protMat <- as.matrix(assay(seProt))  
+# ensure colnames are the sample names used in sample_map$prot_sample
+protView <- alignView(protMat, colnames(protMat), metadataTall, commonSamples, "protSample")
+
+# Drug view (logAUC)
+drugMat <- as.matrix(assay(seDRP))      # rows = drugs, cols = sampleIDs (drug sampleIDs)
+drugView <- alignView(drugMat, colnames(drugMat), metadataTall, commonSamples, "drugSample")
+
+# RNA counts view: use normalized counts assay from DESeq2 object
+countsMat <- as.matrix(assay(vsd))
+rnaView <- alignView(countsMat, colnames(countsMat), metadataTall, commonSamples, "rnaSample")
+```
+```{r}
+# Optional: sanity check dims and names
+dim(protView); dim(rnaView); dim(drugView); dim(snvView) ; dim(cnvView)
+colnames(protView)  # should be common_samples (or same vector across views)
+```
+```{r}
+protView1 <- protView[, 1:(ncol(protView) - 2)]
+rnaView1 <- rnaView[, 1:(ncol(rnaView) - 2)]
+drugView1 <- drugView[, 1:(ncol(drugView) - 2)]
+snvView1 <- snvView[, 1:(ncol(snvView) - 2)]
+cnvView1 <- cnvView[, 1:(ncol(cnvView) - 2)]
+```
+
+
+
+# Feature selection and filtering
+
+```{r}
+selectTopVar <- function(mat, topN = 2000) {
+  varVec <- matrixStats::rowVars(mat, na.rm = TRUE)
+  keep <- order(varVec, decreasing = TRUE)[seq_len(min(topN, sum(!is.na(varVec))))]
+  mat[keep, , drop = FALSE]
+}
+
+rnaViewFilt <- selectTopVar(rnaView1, topN = 3000)     
+protViewFilt <- selectTopVar(protView1, topN = 2000)
+drugViewFilt <- drugView1   # usually small number of drugs
+snvViewFilt <- snvView1
+cnvViewFilt <- cnvView1 # already filtered
+```
+
+# Create the MOFA data list and MOFA object
+
+```{r}
+dataListX <- list(
+  Proteomics = protView1,
+  Transcriptomics = rnaView1,
+  Drug = drugView1,
+  SNV = snvView1,
+  CNV = cnvView1
+)
+
+# Create MOFA object
+mofaObjX <- create_mofa(dataListX)
+plot_data_overview(mofaObjX) +
+  theme(text = element_text(size = 20, face = 'bold'))
+```
+
+```{r}
+dataList <- list(
+  Proteomics = protViewFilt,
+  Transcriptomics = rnaViewFilt,
+  Drug = drugViewFilt,
+  SNV = snvViewFilt,
+  CNV = cnvViewFilt
+)
+
+# Create MOFA object
+mofaObj <- create_mofa(dataList)
+```
+```{r}
+plot_data_overview(mofaObj) +
+  theme(text = element_text(size = 20, face = 'bold'))
+```
+
+# Set data / model / training options
+
+```{r}
+dataOpts   <- get_default_data_options(mofaObj)
+modelOpts  <- get_default_model_options(mofaObj)
+trainOpts  <- get_default_training_options(mofaObj)
+
+modelOpts$num_factors <- 15   
+trainOpts$maxiter <- 1000
+trainOpts$convergence_mode <- "slow"
+trainOpts$seed <- 42
+```
+
+Important: make sure the modelOpts$likelihoods order exactly matches the order 
+of dataList.
+
+# Prepare and run the MOFA model
+
+```{r}
+# Prepare the MOFA object for training
+mofaPrepared <- prepare_mofa(mofaObj,
+                             data_options = dataOpts,
+                             model_options = modelOpts,
+                             training_options = trainOpts)
+
+# Run (this will create an HDF5 file and train the model)
+trainedMofa <- run_mofa(mofaPrepared, outfile = "mofaFullTrainedTALL_19062026.hdf5",
+                        use_basilisk = TRUE)
+```
+
+# Load Mofa model 
+
+```{r}
+trainedMofa <- load_model("mofaFullTrainedTALL_19062026.hdf5")
+```
+
+# Add metadata to the model
+
+
+
+```{r}
+samples_metadata(trainedMofa) <- metadataTall[1:(nrow(metadataTall) - 2), ]
+```
+
+# Correlation between factors
+
+A good sanity check is to verify that the Factors are largely uncorrelated. In MOFA there are no orthogonality constraints such as in Principal Component Analysis, but if there is a lot of correlation between Factors this suggests a poor model fit. Reasons? Perhaps you used too many factors or perhaps the normalization is not adequate. [Link](https://raw.githack.com/bioFAM/MOFA2_tutorials/master/R_tutorials/CLL.html#correlation-between-factors)
+
+```{r}
+plot_factor_cor(trainedMofa)
+```
+
+# Plot variance decomposition
+
+This plot shows the percentage of variance explained by each factor across each 
+data modality (and group, if provided). It summarises the sources of variation 
+from a complex heterogeneous data set in a single figure.
+
+```{r}
+plot_variance_explained(trainedMofa, x="view", y="factor")
+```
+
+```{r}
+plot_variance_explained(trainedMofa, plot_total = TRUE)[[2]]
+```
+
+
+```{r}
+# Using Mofa function
+correlate_factors_with_covariates(trainedMofa, 
+  covariates = c("diagnosisType", "sex", "Age", "cytogenetics", 
+                 "riskGroup", "predictionResponse"), 
+  plot="log_pval"
+)
+```
+
+```{r}
+factors_df <- as.data.frame(get_factors(trainedMofa))
+factors_df$sample = rownames(factors_df)
+colnames(factors_df) <- sub("^group[0-9]+\\.", "", colnames(factors_df))
+head(factors_df)
+```
+
+```{r}
+meta <- samples_metadata(trainedMofa)
+meta <- meta[, c("sample", "diagnosisType", "sex", "Age", "cytogenetics", 
+                 "riskGroup", "predictionResponse")]
+head(meta)
+```
+```{r}
+resAssc <- testAssociation(tabX = factors_df, tabY = meta, joinID = "sample", 
+                           correlation_method = "pearson", 
+                           plot = TRUE, pCut = 0.01, ifFdr = FALSE, pMax = 12, 
+                           onlySignificant = FALSE)
+
+p <- resAssc$plot
+p
+```
+
+
+```{r}
+plot_factor(trainedMofa, 
+  factors = 2, 
+  color_by = "riskGroup",
+  add_violin = TRUE,
+  dodge = TRUE
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
