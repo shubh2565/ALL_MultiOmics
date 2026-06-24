@@ -232,6 +232,8 @@ A good sanity check is to verify that the Factors are largely uncorrelated. In M
 plot_factor_cor(trainedMofa)
 ```
 
+
+
 # Plot variance decomposition
 
 This plot shows the percentage of variance explained by each factor across each 
@@ -279,6 +281,12 @@ p <- resAssc$plot
 p
 ```
 
+```{r}
+plot_factors(trainedMofa, 
+  factors = 1:5,
+  color_by = "diagnosisType"
+)
+```
 
 ```{r}
 plot_factor(trainedMofa, 
@@ -289,12 +297,202 @@ plot_factor(trainedMofa,
 )
 ```
 
+```{r}
+plot_factor(trainedMofa, 
+  factors = 2, 
+  color_by = "predictionResponse",
+  add_violin = TRUE,
+  dodge = TRUE
+)
+```
+
+```{r}
+plot_factor(trainedMofa, 
+  factors = 10, 
+  color_by = "sex",
+  add_violin = TRUE,
+  dodge = TRUE
+)
+```
+
+# Create Mapping Ensemble and UniProt IDs to gene names
+
+```{r}
+# for transcriptomics
+tx_map <- data.frame(
+  ensembl_id = rownames(dds),
+  gene_name  = rowData(dds)$name,
+  stringsAsFactors = FALSE
+)
+```
+
+```{r}
+# for proteomics
+prot_map <- data.frame(
+  uniprot_id  = rownames(seProt),
+  gene_name = rowData(seProt)$Gene,
+  stringsAsFactors = FALSE
+)
+```
+
+# Mapping IDs to names
+
+```{r}
+weights <- get_weights(trainedMofa, views = c("Transcriptomics", "Proteomics", "CNV"))
+```
+
+```{r}
+# for transcriptomics 
+tx_weights <- as.data.frame(weights$Transcriptomics)
+
+tx_weights$ensembl_id <- rownames(tx_weights)
+
+tx_weights <- merge(tx_weights, tx_map,
+                    by = "ensembl_id",
+                    all.x = TRUE)
+```
+
+```{r}
+# for proteomics
+prot_weights <- as.data.frame(weights$Proteomics)
+
+prot_weights$uniprot_id <- rownames(prot_weights)
+
+prot_weights <- merge(prot_weights, prot_map,
+                      by = "uniprot_id",
+                      all.x = TRUE)
+```
+
+```{r}
+factor_name <- "Factor1" 
+top_w <- tx_weights %>%
+  arrange(desc(abs(.data[[factor_name]]))) %>%
+  slice(1:20)
+
+top_w[[factor_name]] <- top_w[[factor_name]] /
+                        max(abs(top_w[[factor_name]]))
+
+ggplot(top_w,
+       aes(x = reorder(gene_name, .data[[factor_name]]),
+           y = .data[[factor_name]],
+           fill = .data[[factor_name]] > 0)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("#1B9E77", "#7570B3")) +
+  labs(x = "Gene",
+       y = "Weight (scaled)",
+       title = paste("Top 20 weights - Transcriptomics - ", factor_name)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+factor_name <- "Factor5" 
+top_w <- prot_weights %>%
+  arrange(desc(abs(.data[[factor_name]]))) %>%
+  slice(1:20)
+
+top_w[[factor_name]] <- top_w[[factor_name]] /
+                        max(abs(top_w[[factor_name]]))
+
+ggplot(top_w,
+       aes(x = reorder(gene_name, .data[[factor_name]]),
+           y = .data[[factor_name]],
+           fill = .data[[factor_name]] > 0)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("#1B9E77", "#7570B3")) +
+  labs(x = "Gene",
+       y = "Weight (scaled)",
+       title = paste("Top 20 weights - Proteomics - ", factor_name)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+cnv_weights <- as.data.frame(weights$CNV)
+
+# keep feature names (e.g. genomic regions) as a column
+cnv_weights$feature <- rownames(cnv_weights)
+
+# choose factor
+factor_name <- "Factor6"   # adjust as needed
+
+# select top features
+top_w <- cnv_weights %>%
+  arrange(desc(abs(.data[[factor_name]]))) %>%
+  slice(1:20)
+
+# scale weights to [-1, 1]
+top_w[[factor_name]] <- top_w[[factor_name]] /
+                        max(abs(top_w[[factor_name]]))
+
+# plot
+ggplot(top_w,
+       aes(x = reorder(feature, .data[[factor_name]]),
+           y = .data[[factor_name]],
+           fill = .data[[factor_name]] > 0)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("#1B9E77", "#7570B3")) +
+  labs(x = "CNV region",
+       y = "Weight (scaled)",
+       title = paste("Top 20 weights - CNV -", factor_name)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+cnv_weights <- as.data.frame(weights$CNV)
+
+# keep feature names (e.g. genomic regions) as a column
+cnv_weights$feature <- rownames(cnv_weights)
+
+# choose factor
+factor_name <- "Factor7"   # adjust as needed
+
+# select top features
+top_w <- cnv_weights %>%
+  arrange(desc(abs(.data[[factor_name]]))) %>%
+  slice(1:20)
+
+# scale weights to [-1, 1]
+top_w[[factor_name]] <- top_w[[factor_name]] /
+                        max(abs(top_w[[factor_name]]))
+
+# plot
+ggplot(top_w,
+       aes(x = reorder(feature, .data[[factor_name]]),
+           y = .data[[factor_name]],
+           fill = .data[[factor_name]] > 0)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_manual(values = c("#1B9E77", "#7570B3")) +
+  labs(x = "CNV region",
+       y = "Weight (scaled)",
+       title = paste("Top 20 weights - CNV -", factor_name)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
 
 
 
-
-
-
+```{r}
+plot_top_weights(trainedMofa,
+ view = "CNV",
+ factor = 6,
+ nfeatures = 20,     # Top number of features to highlight
+ scale = T           # Scale weights from -1 to 1
+)
+```
+```{r}
+plot_top_weights(trainedMofa,
+ view = "CNV",
+ factor = 7,
+ nfeatures = 20,     # Top number of features to highlight
+ scale = T           # Scale weights from -1 to 1
+)
+```
 
 
 
