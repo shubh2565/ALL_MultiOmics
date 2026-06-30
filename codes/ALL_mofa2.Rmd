@@ -259,6 +259,16 @@ correlate_factors_with_covariates(trainedMofa,
 ```
 
 ```{r}
+plot_factor(trainedMofa, 
+  factors = 2, 
+  color_by = "predictionResponse",
+  add_violin = TRUE,
+  dodge = TRUE
+)
+```
+
+
+```{r}
 factors_df <- as.data.frame(get_factors(trainedMofa))
 factors_df$sample = rownames(factors_df)
 colnames(factors_df) <- sub("^group[0-9]+\\.", "", colnames(factors_df))
@@ -388,7 +398,10 @@ ggplot(top_w,
   theme(legend.position = "none")
 ```
 
-
+B-cell lineage markers
+PAX5
+CD19
+BTK
 
 ```{r}
 factor_name <- "Factor2" 
@@ -415,6 +428,8 @@ ggplot(top_w,
   theme(legend.position = "none")
 ```
 
+Factor 2 looks like an innate-like lymphocyte (KLRB1, ZNF683, CTSW) / immature lymphoid differentiation program (DNTT, ZBTB16)
+
 ```{r}
 factor_name <- "Factor3" 
 top_w <- tx_weights %>%
@@ -439,6 +454,21 @@ ggplot(top_w,
   theme_minimal() +
   theme(legend.position = "none")
 ```
+The strongest signal here is not the individual genes in isolation, but the fact that several core T-cell receptor (TCR) and T-cell lineage genes appear together.
+Strong T-cell markers
+These are canonical T-cell genes:
+CD3D
+CD3E
+CD3G
+TRAC
+TRDC
+TRAT1
+CD7
+
+TLX3 activation is a well-known molecular subtype of T-ALL. Seeing TLX3 among the highest-weight genes suggests Factor 3 may be capturing a subgroup of samples with a TLX3-associated transcriptional program.
+
+TCL1A is more commonly associated with immature lymphoid states and B-cell malignancies, but it can be expressed in subsets of T-ALL, particularly less differentiated cases.
+
 
 
 ```{r}
@@ -473,6 +503,45 @@ ggplot(top_w,
   theme_minimal() +
   theme(legend.position = "none")
 ```
+Proteomics Factor 1 is predominantly a T-cell lineage factor, although there are a few proteins that are also seen in other lymphoid cells.
+Strong evidence for a T-cell program
+Several of the highest-weight proteins are canonical T-cell markers:
+CD2
+CD3D
+CD3E
+CD3G
+LCK
+TCF7
+BCL11B
+FYB1
+TRB (T-cell receptor beta chain)
+Together, these proteins define T-cell identity and T-cell receptor (TCR) signaling. Seeing so many of them in one factor strongly suggests this factor represents a T-cell lineage program.
+Proteins that are not T-cell specific
+Two genes critical for T-cell development and identity:
+TCF7 is important in early T-cell differentiation and is often highly expressed in immature or stem-like T cells.
+BCL11B is essential for commitment to the T-cell lineage and is frequently altered in T-ALL.
+Their presence strongly supports that this factor reflects T-cell lineage biology, not just general immune infiltration.
+
+
+A few proteins are shared across immune cell types:
+HLA-DRA – antigen presentation; expressed by antigen-presenting cells and some leukemias.
+LGALS1 – broadly expressed and involved in immune regulation.
+TNFAIP8L2 – not specific to T cells.
+These don't change the overall interpretation.
+Why are BTK and IGLL1 present?
+These are the two proteins that suggest some overlap with B-cell biology.
+BTK is best known for its role in B-cell receptor signaling and is a hallmark of B cells and B-ALL. However, low-level expression can occur in other hematopoietic cells, and proteomic factors often capture proteins shared across related lineages.
+IGLL1 is associated with early B-cell development and is more characteristic of B-lineage cells.
+Their presence could reflect:
+a mixed cohort containing both B-ALL and T-ALL,
+shared developmental programs in early lymphoid precursors,
+or lower-level expression that covaries with the dominant T-cell signal.
+
+
+Two proteins stand out because they're not classic T-cell markers:
+BTK
+IGLL1
+These are generally associated with B-cell biology.
 
 ```{r}
 factor_name <- "Factor5" 
@@ -498,6 +567,8 @@ ggplot(top_w,
   theme_minimal() +
   theme(legend.position = "none")
 ```
+Proteomics Factor 5 looks more like a mix of proliferation/chromatin (HMGA1, H3C1, H3-3A) + RNA processing + plasma protein contamination (ALG, PLG, PZP) rather than a lineage-defining T-cell program.
+
 ```{r}
 cnv_weights <- as.data.frame(weights$CNV)
 
@@ -532,6 +603,26 @@ ggplot(top_w,
   theme_minimal() +
   theme(legend.position = "none")
 ```
+this CNV factor contains alterations that are characteristic of both T-ALL and B-ALL, which suggests it is capturing a shared lymphoid leukemia genomic program rather than a purely T-ALL-specific one.
+Here's how the genes break down.
+More strongly associated with T-ALL
+These are well-known T-ALL genes:
+NOTCH1
+TLX3
+BCL11B
+LEF1
+JAK3
+TRB
+These collectively point toward T-cell biology.
+More strongly associated with B-ALL
+These alterations are classic B-ALL lesions:
+PAX5 (PAX5_DEL) — one of the most frequently altered genes in B-ALL.
+IKZF1 (IKZF1_DEL) — very common in high-risk B-ALL, especially Philadelphia chromosome-positive and Philadelphia-like B-ALL.
+CRLF2 (CRLF2_DUP) — strongly associated with Ph-like B-ALL.
+These three together are a recognizable B-ALL-associated pattern.
+
+
+
 
 
 ```{r}
@@ -568,6 +659,14 @@ ggplot(top_w,
   theme_minimal() +
   theme(legend.position = "none")
 ```
+
+Core T-cell / T-ALL genes
+BCL11B → essential for T-cell identity; deletions seen in T-ALL
+TLX3 → aberrantly activated in T-ALL
+LEF1 → involved in T-cell development
+NOTCH1  → central oncogenic pathway
+
+
 
 ```{r}
 cnv_weights <- as.data.frame(weights$CNV)
