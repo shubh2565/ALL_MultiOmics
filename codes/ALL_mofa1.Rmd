@@ -14,6 +14,8 @@ library(tidyverse)
 library(DESeq2)
 library(MOFA2)
 library(readxl)
+library(ggrepel)
+source("helper.R")
 ```
 
 # Load the data
@@ -135,8 +137,8 @@ vsd <- DESeq2::varianceStabilizingTransformation(dds)
 ```
 
 ```{r}
-snv <- readRDS("snvWES.rds")
-cnv <- readRDS("cnvWES.rds")
+snv <- readRDS("objects/snvWES.rds")
+cnv <- readRDS("objects/cnvWES.rds")
 ```
 
 
@@ -149,6 +151,9 @@ cnv_binary_filt <- cnv[event_freq >= 2, ]
 dim(cnv_binary_filt)
 ```
 
+```{r}
+
+```
 
 
 ```{r}
@@ -186,6 +191,8 @@ snvView <- alignView(snv_mat, colnames(snv_mat), finalMetadata, commonSamples, "
 cnv_mat <- as.matrix(cnv_binary_filt)  
 cnvView <- alignView(cnv_mat, colnames(cnv_mat), finalMetadata, commonSamples, "wesSample")
 ```
+
+
 
 
 ```{r}
@@ -226,6 +233,29 @@ cnvViewFilt <- cnvView # already filtered
 
 # Create the MOFA data list and MOFA object
 
+
+```{r}
+cnv_matOG <- as.matrix(cnv)  
+cnvViewOG <- alignView(cnv_matOG, colnames(cnv_mat), finalMetadata, commonSamples, "wesSample")
+```
+
+
+```{r}
+dataListX <- list(
+  Proteomics = protView,
+  Transcriptomics = rnaView,
+  Drug = drugView,
+  SNV = snvView,
+  CNV = cnvViewOG
+)
+
+# Create MOFA object
+mofaObjX <- create_mofa(dataListX)
+plot_data_overview(mofaObjX) +
+  theme(text = element_text(size = 20, face = 'bold'))
+```
+
+
 ```{r}
 dataListX <- list(
   Proteomics = protView,
@@ -264,7 +294,7 @@ dataOpts   <- get_default_data_options(mofaObj)
 modelOpts  <- get_default_model_options(mofaObj)
 trainOpts  <- get_default_training_options(mofaObj)
 
-modelOpts$num_factors <- 15   
+modelOpts$num_factors <- 20   
 trainOpts$maxiter <- 1000
 trainOpts$convergence_mode <- "slow"
 trainOpts$seed <- 42
@@ -332,11 +362,145 @@ There are a few systematic strategies to characterize the molecular etiology und
 - Gene set enrichment analysis on the mRNA weights.
 
 ```{r}
-plot_factor(trainedMofa, 
+p <- plot_factor(trainedMofa, 
   factors = 1, 
+  color_by = "diseaseType"
+)
+
+head(p$data)
+p$mapping
+p
+```
+
+From the plot, it's evident that some samples have incorrect annotation for the diseaseType. 
+
+```{r}
+samples_to_label <- p$data$sample
+
+# Coordinates after ggplot has built the plot
+pts <- ggplot_build(p)$data[[1]]
+
+# Add sample names to those coordinates
+pts$sample <- p$data$sample
+
+p +
+  geom_text_repel(
+    data = pts[pts$sample %in% samples_to_label, ],
+    aes(x = x, y = y, label = sample),
+    inherit.aes = FALSE,
+    box.padding = 0.3,
+    point.padding = 0.2,
+    max.overlaps = Inf
+  )
+```
+
+
+
+```{r}
+# Extract factor values
+df <- as.data.frame(get_factors(trainedMofa, factors = 1)$group1)
+df$sample <- rownames(df)
+
+# Add sample metadata
+meta <- samples_metadata(trainedMofa)
+
+df$sample <- rownames(df)
+df$diseaseType <- meta[df$sample, "diseaseType"]
+df$rnaSample <- meta[df$sample, "rnaSample"]
+
+df$x <- jitter(rep(1, nrow(df)), amount = 0.15)
+
+samples_to_label <- df$rnaSample
+
+ggplot(df, aes(x = x, y = Factor1, color = diseaseType)) +
+  geom_point(size = 2) +
+  geom_text_repel(
+    data = subset(df, rnaSample %in% samples_to_label),
+    aes(label = rnaSample),
+    max.overlaps = Inf
+  ) +
+  theme_classic()
+```
+
+
+```{r}
+plot_factor(trainedMofa, 
+  factors = 2, 
   color_by = "diseaseType"
 )
 ```
 
-From the plot, it's evident that some samples have incorrect annotation for the diseaseType. 
+```{r}
+# Extract factor values
+df <- as.data.frame(get_factors(trainedMofa, factors = 2)$group1)
+df$sample <- rownames(df)
+
+# Add sample metadata
+meta <- samples_metadata(trainedMofa)
+
+df$sample <- rownames(df)
+df$diseaseType <- meta[df$sample, "diseaseType"]
+df$rnaSample <- meta[df$sample, "rnaSample"]
+
+df$x <- jitter(rep(1, nrow(df)), amount = 0.15)
+
+samples_to_label <- df$rnaSample
+
+ggplot(df, aes(x = x, y = Factor2, color = diseaseType)) +
+  geom_point(size = 2) +
+  geom_text_repel(
+    data = subset(df, rnaSample %in% samples_to_label),
+    aes(label = rnaSample),
+    max.overlaps = Inf
+  ) +
+  theme_classic()
+```
+
+
+
+```{r}
+plot_factor(
+  trainedMofa,
+  factors = c(1, 2),
+  color_by = "diseaseType"
+)
+```
+
+
+
+
+```{r}
+# Using Mofa function
+correlate_factors_with_covariates(trainedMofa, 
+  covariates = c("diseaseType", "diagnosisType", "sex", "Age", "cytogenetics", 
+                 "riskGroup", "predictionResponse"), 
+  plot="log_pval"
+)
+```
+
+```{r}
+factors_df <- as.data.frame(get_factors(trainedMofa))
+factors_df$sample = rownames(factors_df)
+colnames(factors_df) <- sub("^group[0-9]+\\.", "", colnames(factors_df))
+head(factors_df)
+```
+```{r}
+meta <- samples_metadata(trainedMofa)
+meta <- meta[, c("sample", "diseaseType", "diagnosisType", "sex", "Age", "cytogenetics", 
+                 "riskGroup", "predictionResponse")]
+head(meta)
+```
+
+```{r}
+resAssc <- testAssociation(tabX = factors_df, tabY = meta, joinID = "sample", 
+                           correlation_method = "pearson", 
+                           plot = TRUE, pCut = 0.01, ifFdr = FALSE, pMax = 12, 
+                           onlySignificant = FALSE)
+
+p <- resAssc$plot
+p
+```
+
+
+
 
