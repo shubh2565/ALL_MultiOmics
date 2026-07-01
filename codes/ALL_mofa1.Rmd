@@ -147,12 +147,8 @@ cnv <- readRDS("objects/cnvWES.rds")
 dim(cnv)
 # filter out low frequency events
 event_freq <- rowSums(cnv)
-cnv_binary_filt <- cnv[event_freq >= 2, ]
+cnv_binary_filt <- cnv[event_freq >= 3, ]
 dim(cnv_binary_filt)
-```
-
-```{r}
-
 ```
 
 
@@ -295,9 +291,13 @@ modelOpts  <- get_default_model_options(mofaObj)
 trainOpts  <- get_default_training_options(mofaObj)
 
 modelOpts$num_factors <- 20   
-trainOpts$maxiter <- 1000
+modelOpts$likelihoods["SNV"] <- "bernoulli"
+modelOpts$likelihoods["CNV"] <- "bernoulli"
+
+trainOpts$maxiter <- 10000
 trainOpts$convergence_mode <- "slow"
 trainOpts$seed <- 42
+trainOpts$drop_factor_threshold <- 0.01
 ```
 
 Important: make sure the modelOpts$likelihoods order exactly matches the order 
@@ -374,27 +374,6 @@ p
 
 From the plot, it's evident that some samples have incorrect annotation for the diseaseType. 
 
-```{r}
-samples_to_label <- p$data$sample
-
-# Coordinates after ggplot has built the plot
-pts <- ggplot_build(p)$data[[1]]
-
-# Add sample names to those coordinates
-pts$sample <- p$data$sample
-
-p +
-  geom_text_repel(
-    data = pts[pts$sample %in% samples_to_label, ],
-    aes(x = x, y = y, label = sample),
-    inherit.aes = FALSE,
-    box.padding = 0.3,
-    point.padding = 0.2,
-    max.overlaps = Inf
-  )
-```
-
-
 
 ```{r}
 # Extract factor values
@@ -425,14 +404,14 @@ ggplot(df, aes(x = x, y = Factor1, color = diseaseType)) +
 
 ```{r}
 plot_factor(trainedMofa, 
-  factors = 2, 
+  factors = 4, 
   color_by = "diseaseType"
 )
 ```
 
 ```{r}
 # Extract factor values
-df <- as.data.frame(get_factors(trainedMofa, factors = 2)$group1)
+df <- as.data.frame(get_factors(trainedMofa, factors = 4)$group1)
 df$sample <- rownames(df)
 
 # Add sample metadata
@@ -446,7 +425,7 @@ df$x <- jitter(rep(1, nrow(df)), amount = 0.15)
 
 samples_to_label <- df$rnaSample
 
-ggplot(df, aes(x = x, y = Factor2, color = diseaseType)) +
+ggplot(df, aes(x = x, y = Factor4, color = diseaseType)) +
   geom_point(size = 2) +
   geom_text_repel(
     data = subset(df, rnaSample %in% samples_to_label),
@@ -461,7 +440,7 @@ ggplot(df, aes(x = x, y = Factor2, color = diseaseType)) +
 ```{r}
 plot_factor(
   trainedMofa,
-  factors = c(1, 2),
+  factors = c(1, 4),
   color_by = "diseaseType"
 )
 ```
