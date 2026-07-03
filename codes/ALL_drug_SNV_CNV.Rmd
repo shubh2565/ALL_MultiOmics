@@ -1,0 +1,194 @@
+---
+title: "Drug and CNV/SNV association"
+author: "Shubham Agrawal"
+date: "2026-07-03"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(limma)
+library(ggplot2)
+```
+
+# Load the objects
+
+```{r}
+drug <- readRDS("objects/drpObject.Rds")
+snv <- readRDS("objects/snvWES.rds")
+cnv <- readRDS("objects/cnvWES.rds")
+cnvOG <- readRDS("objects/cnvRealValues.Rds")
+```
+
+# Load the metadata file
+
+```{r}
+meta <- read_csv("finalMetadata_Mofa.csv")
+meta$drugSample <- as.character(meta$drugSample)
+head(meta)
+```
+
+```{r}
+metaSNV <- subset(meta,
+                   wesSample %in% colnames(snv) &
+                   drugSample %in% colnames(drug))
+
+snv1 <- snv[, metaSNV$wesSample]
+drug1 <- drug[, metaSNV$drugSample]
+
+# Rename to common IDs
+colnames(snv1) <- metaSNV$drugSample
+colnames(drug1) <- metaSNV$drugSample
+
+identical(colnames(snv1), colnames(drug1))
+```
+```{r}
+drug1 <- as.matrix(assay(drug1))
+
+results <- list()
+
+for(gene in rownames(snv1)){
+
+    mut <- factor(snv1[gene,],
+                  levels=c(0,1),
+                  labels=c("WT","Mut"))
+
+    if(length(unique(mut))<2)
+        next
+
+    design <- model.matrix(~mut)
+
+    fit <- lmFit(drug1, design)
+    fit <- eBayes(fit)
+
+    tt <- topTable(fit,
+                   coef="mutMut",
+                   number=Inf)
+
+    tt$Gene <- gene
+
+    results[[gene]] <- tt
+}
+
+results <- do.call(rbind, results)
+```
+
+```{r}
+tt <- topTable(fit,
+               coef = "mutMut",
+               number = Inf)
+
+tt$Drug <- rownames(tt)
+
+ggplot(tt, aes(logFC, -log10(adj.P.Val))) +
+    geom_point() +
+    geom_vline(xintercept = 0, linetype = 2) +
+    geom_hline(yintercept = -log10(0.05), linetype = 2) +
+    theme_classic() +
+    xlab("Difference in logAUC") +
+    ylab("-log10(FDR)")
+```
+
+```{r}
+results$Drug <- str_remove(rownames(results),
+                           paste0("^", results$Gene, "\\."))
+
+heat <- results |>
+    select(Gene, Drug, B) |>
+    pivot_wider(names_from = Drug,
+                values_from = B)
+
+mat <- as.matrix(heat[,-1])
+rownames(mat) <- heat$Gene
+```
+
+```{r}
+pheatmap(mat,
+         color = colorRampPalette(c("blue","white","red"))(100))
+```
+
+```{r}
+metaCNV <- subset(meta,
+                   wesSample %in% colnames(cnv) &
+                   drugSample %in% colnames(drug))
+
+cnv2 <- cnv[, metaCNV$wesSample]
+drug2 <- drug[, metaCNV$drugSample]
+
+# Rename to common IDs
+colnames(cnv2) <- metaCNV$drugSample
+colnames(drug2) <- metaCNV$drugSample
+
+identical(colnames(cnv2), colnames(drug2))
+```
+```{r}
+drug2 <- as.matrix(assay(drug2))
+
+results <- list()
+
+for(gene in rownames(cnv2)){
+
+    mut <- factor(cnv2[gene,],
+                  levels=c(0,1),
+                  labels=c("WT","Mut"))
+
+    if(length(unique(mut))<2)
+        next
+
+    design <- model.matrix(~mut)
+
+    fit <- lmFit(drug2, design)
+    fit <- eBayes(fit)
+
+    tt <- topTable(fit,
+                   coef="mutMut",
+                   number=Inf)
+
+    tt$Gene <- gene
+
+    results[[gene]] <- tt
+}
+
+results <- do.call(rbind, results)
+```
+
+```{r}
+tt <- topTable(fit,
+               coef = "mutMut",
+               number = Inf)
+
+tt$Drug <- rownames(tt)
+
+ggplot(tt, aes(logFC, -log10(adj.P.Val))) +
+    geom_point() +
+    geom_vline(xintercept = 0, linetype = 2) +
+    geom_hline(yintercept = -log10(0.05), linetype = 2) +
+    theme_classic() +
+    xlab("Difference in logAUC") +
+    ylab("-log10(FDR)")
+```
+```{r}
+results$Drug <- str_remove(rownames(results),
+                           paste0("^", results$Gene, "\\."))
+
+heat <- results |>
+    select(Gene, Drug, B) |>
+    pivot_wider(names_from = Drug,
+                values_from = B)
+
+mat <- as.matrix(heat[,-1])
+rownames(mat) <- heat$Gene
+```
+
+```{r}
+pheatmap(mat,
+         color = colorRampPalette(c("blue","white","red"))(100))
+```
+
+
+
+
+
