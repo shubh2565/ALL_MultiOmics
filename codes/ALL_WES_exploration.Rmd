@@ -1,0 +1,83 @@
+---
+title: "WES exploratory analysis"
+author: "Shubham Agrawal"
+date: "2026-06-24"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(janitor)
+```
+
+```{r}
+snv <- readRDS("objects/snvWES.rds")
+cnv <- readRDS("objects/cnvWES.rds")
+cnvOG <- readRDS("objects/cnvRealValues.Rds")
+```
+
+```{r}
+metadata <- read_excel("/Users/shubhamagrawal/Desktop/ALL/data/wes/metadata_bb_final.xlsx")
+head(metadata)
+```
+
+```{r}
+metadata <- metadata %>%
+  clean_names() %>%   # makes names snake_case
+  rename(correct_id = correct_sample_id)
+```
+
+
+```{r}
+intersect(colnames(snv_mat), metadata$correct_id)
+```
+
+```{r}
+metadata_matched <- metadata %>%
+  filter(correct_id %in% colnames(snv)) %>%
+  slice(match(colnames(snv_mat), correct_id))
+```
+
+```{r}
+all(metadata_matched$correct_id == colnames(snv))
+```
+
+```{r}
+gene_freq <- rowSums(snv)
+
+barplot(sort(gene_freq, decreasing = TRUE)[1:20],
+        las = 2, col = "navyblue", main = "Top mutated genes")
+```
+
+```{r}
+gene_freq <- rowSums(cnv)
+
+barplot(sort(gene_freq, decreasing = TRUE)[1:20],
+        las = 2, col = "navyblue", main = "Top mutated genes")
+```
+```{r}
+cnv_numeric <- cnvOG
+
+cnv_numeric[cnv_numeric == 0] <- -2
+cnv_numeric[cnv_numeric == 1] <- -1
+cnv_numeric[cnv_numeric == 3] <- 1
+cnv_numeric[cnv_numeric == 4] <- 2
+cnv_numeric[is.na(cnv_numeric)] <- 0   # neutral
+```
+
+
+```{r}
+snv_burden <- colSums(snv)
+cnv_burden_bin <- colSums(cnv)
+cnv_burden_num <- colSums(abs(cnv_numeric))
+```
+
+```{r}
+cor(snv_burden, cnv_burden_num)
+plot(snv_burden, cnv_burden_num)
+```
+
