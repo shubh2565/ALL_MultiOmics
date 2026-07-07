@@ -29,6 +29,8 @@ cnvOG <- readRDS("objects/cnvRealValues.Rds")
 meta <- read_csv("finalMetadata_Mofa.csv")
 meta$drugSample <- as.character(meta$drugSample)
 head(meta)
+meta <- meta[meta$diseaseType == "T-ALL", ]
+head(meta)
 ```
 
 ```{r}
@@ -58,6 +60,8 @@ for(gene in rownames(snv1)){
 
     if(length(unique(mut))<2)
         next
+    if (min(table(mut)) < 3)
+        next
 
     design <- model.matrix(~mut)
 
@@ -69,45 +73,61 @@ for(gene in rownames(snv1)){
                    number=Inf)
 
     tt$Gene <- gene
+    tt$Drug <- rownames(tt)
 
     results[[gene]] <- tt
 }
 
 results <- do.call(rbind, results)
+results$GlobalFDR <- p.adjust(results$P.Value, method = "BH")
 ```
 
+
+
 ```{r}
-tt <- topTable(fit,
-               coef = "mutMut",
-               number = Inf)
-
-tt$Drug <- rownames(tt)
-
-ggplot(tt, aes(logFC, -log10(adj.P.Val))) +
-    geom_point() +
-    geom_vline(xintercept = 0, linetype = 2) +
-    geom_hline(yintercept = -log10(0.05), linetype = 2) +
-    theme_classic() +
-    xlab("Difference in logAUC") +
-    ylab("-log10(FDR)")
+results$Sig <- results$GlobalFDR < 0.1
+ggplot(results,
+       aes(x = logFC,
+           y = -log10(P.Value))) +
+    geom_point(alpha = 0.5) +
+    geom_hline(yintercept = -log10(0.05),
+               linetype = 2,
+               colour = "red") +
+    theme_classic()
 ```
-
 ```{r}
-results$Drug <- str_remove(rownames(results),
-                           paste0("^", results$Gene, "\\."))
-
+## Heatmap values (logFC)
 heat <- results |>
-    select(Gene, Drug, B) |>
+    select(Gene, Drug, logFC) |>
     pivot_wider(names_from = Drug,
-                values_from = B)
+                values_from = logFC,
+                values_fill = 0)
 
-mat <- as.matrix(heat[,-1])
+mat <- as.matrix(heat[, -1])
 rownames(mat) <- heat$Gene
-```
 
-```{r}
-pheatmap(mat,
-         color = colorRampPalette(c("blue","white","red"))(100))
+## Matrix of significance symbols
+sig <- results |>
+    mutate(star = case_when(
+        P.Value < 0.001 ~ "***",
+        P.Value < 0.01  ~ "**",
+        P.Value < 0.05  ~ "*",
+        TRUE ~ ""
+    )) |>
+    select(Gene, Drug, star) |>
+    pivot_wider(names_from = Drug,
+                values_from = star,
+                values_fill = "")
+
+sig_mat <- as.matrix(sig[, -1])
+rownames(sig_mat) <- sig$Gene
+
+pheatmap(
+    mat,
+    color = colorRampPalette(c("blue", "white", "red"))(100),
+    display_numbers = sig_mat,
+    number_color = "black",
+    fontsize_number = 10)
 ```
 
 ```{r}
@@ -137,6 +157,8 @@ for(gene in rownames(cnv2)){
 
     if(length(unique(mut))<2)
         next
+    if (min(table(mut)) < 3)
+        next
 
     design <- model.matrix(~mut)
 
@@ -148,44 +170,125 @@ for(gene in rownames(cnv2)){
                    number=Inf)
 
     tt$Gene <- gene
+    tt$Drug <- rownames(tt)
 
     results[[gene]] <- tt
 }
 
 results <- do.call(rbind, results)
+results$GlobalFDR <- p.adjust(results$P.Value, method = "BH")
 ```
 
 ```{r}
-tt <- topTable(fit,
-               coef = "mutMut",
-               number = Inf)
-
-tt$Drug <- rownames(tt)
-
-ggplot(tt, aes(logFC, -log10(adj.P.Val))) +
-    geom_point() +
-    geom_vline(xintercept = 0, linetype = 2) +
-    geom_hline(yintercept = -log10(0.05), linetype = 2) +
-    theme_classic() +
-    xlab("Difference in logAUC") +
-    ylab("-log10(FDR)")
+results$Sig <- results$GlobalFDR < 0.1
+ggplot(results,
+       aes(x = logFC,
+           y = -log10(P.Value))) +
+    geom_point(alpha = 0.5) +
+    geom_hline(yintercept = -log10(0.05),
+               linetype = 2,
+               colour = "red") +
+    theme_classic()
 ```
-```{r}
-results$Drug <- str_remove(rownames(results),
-                           paste0("^", results$Gene, "\\."))
 
+```{r}
 heat <- results |>
-    select(Gene, Drug, B) |>
+    select(Gene, Drug, logFC) |>
     pivot_wider(names_from = Drug,
-                values_from = B)
+                values_from = logFC,
+                values_fill = 0)
 
 mat <- as.matrix(heat[,-1])
 rownames(mat) <- heat$Gene
+
+pheatmap(mat,
+         color = colorRampPalette(c("blue","white","red"))(100))
 ```
 
 ```{r}
-pheatmap(mat,
-         color = colorRampPalette(c("blue","white","red"))(100))
+ggplot(results,
+       aes(Drug,
+           Gene)) +
+    geom_point(aes(size = -log10(P.Value),
+                   colour = logFC)) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    scale_colour_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red")
+```
+
+```{r}
+## Heatmap values (logFC)
+heat <- results |>
+    select(Gene, Drug, logFC) |>
+    pivot_wider(names_from = Drug,
+                values_from = logFC,
+                values_fill = 0)
+
+mat <- as.matrix(heat[, -1])
+rownames(mat) <- heat$Gene
+
+## Matrix of significance symbols
+sig <- results |>
+    mutate(star = case_when(
+        P.Value < 0.001 ~ "***",
+        P.Value < 0.01  ~ "**",
+        P.Value < 0.05  ~ "*",
+        TRUE ~ ""
+    )) |>
+    select(Gene, Drug, star) |>
+    pivot_wider(names_from = Drug,
+                values_from = star,
+                values_fill = "")
+
+sig_mat <- as.matrix(sig[, -1])
+rownames(sig_mat) <- sig$Gene
+
+pheatmap(
+    mat,
+    color = colorRampPalette(c("blue", "white", "red"))(100),
+    display_numbers = sig_mat,
+    number_color = "black",
+    fontsize_number = 10)
+```
+
+
+
+
+
+
+
+
+
+```{r}
+# tt <- topTable(fit,
+#                coef = "mutMut",
+#                number = Inf)
+# 
+# tt$Drug <- rownames(tt)
+# 
+# ggplot(tt, aes(logFC, -log10(adj.P.Val))) +
+#     geom_point() +
+#     geom_vline(xintercept = 0, linetype = 2) +
+#     geom_hline(yintercept = -log10(0.05), linetype = 2) +
+#     theme_classic() +
+#     xlab("Difference in logAUC") +
+#     ylab("-log10(FDR)")
+```
+```{r}
+# results$Drug <- str_remove(rownames(results),
+#                            paste0("^", results$Gene, "\\."))
+# 
+# heat <- results |>
+#     select(Gene, Drug, B) |>
+#     pivot_wider(names_from = Drug,
+#                 values_from = B)
+# 
+# mat <- as.matrix(heat[,-1])
+# rownames(mat) <- heat$Gene
+# pheatmap(mat,
+#          color = colorRampPalette(c("blue","white","red"))(100))
 ```
 
 
