@@ -1,0 +1,56 @@
+---
+title: "Cibersort Proteomics"
+author: "Shubham Agrawal"
+date: "2026-07-14"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+    code_folding: "hide"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load the dds object
+
+```{r}
+se <- readRDS("objects/protoemics.Rds")
+se
+```
+```{r}
+protMat <- assay(se)
+head(protMat)
+```
+```{r}
+rd <- rowData(se)
+head(rd)
+```
+```{r}
+dim(rd)
+length(unique(rd$Gene))
+length(unique(rd$ProteinID))
+```
+```{r}
+gene <- rd$Gene
+```
+
+```{r}
+df <- data.frame(
+  gene = gene,
+  protMat,
+  check.names = FALSE
+)
+
+# Average proteins mapping to the same gene
+expr_gene <- df %>%
+  filter(!is.na(gene), gene != "") %>%
+  group_by(gene) %>%
+  summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE)),
+            .groups = "drop")
+
+expr_gene <- as.data.frame(expr_gene)
+rownames(expr_gene) <- expr_gene$gene
+expr_gene$gene <- NULL
+```
+
