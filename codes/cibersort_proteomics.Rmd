@@ -10,6 +10,9 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(CIBERSORT)
+library(ggplot2)
+library(pheatmap)
 ```
 
 # Load the dds object
@@ -53,4 +56,97 @@ expr_gene <- as.data.frame(expr_gene)
 rownames(expr_gene) <- expr_gene$gene
 expr_gene$gene <- NULL
 ```
+
+```{r}
+input_matrix <- data.frame(GeneSymbol = rownames(expr_gene),
+                           expr_gene,
+                           check.names = FALSE)
+
+write.table(input_matrix,
+            file = "ALL_PROT_for_CIBERSORTx.txt",
+            sep = "\t",
+            quote = FALSE,
+            row.names = FALSE)
+```
+
+
+```{r}
+sig_matrix <- system.file("extdata", "LM22.txt", package = "CIBERSORT")
+results <- cibersort(sig_matrix, "ALL_PROT_for_CIBERSORTx.txt")
+```
+
+```{r}
+head(results)
+```
+
+```{r}
+results <- as.data.frame(results)
+results$Total_Bcells <- results$`B cells naive` +
+                        results$`B cells memory` +
+                        results$`Plasma cells`
+
+results$Total_Tcells <- results$`T cells CD8` +
+                        results$`T cells CD4 naive` +
+                        results$`T cells CD4 memory resting` +
+                        results$`T cells CD4 memory activated` +
+                        results$`T cells follicular helper` +
+                        results$`T cells regulatory (Tregs)`
+```
+
+
+```{r}
+ggplot(results, aes(x = Total_Bcells, y = Total_Tcells)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Total B-cell fraction",
+       y = "Total T-cell fraction")
+```
+```{r}
+# Remove non-cell columns
+cell_fraction <- results[, !colnames(results) %in% 
+                           c("P-value", "Correlation", "RMSE", "Absolute score")]
+```
+
+
+```{r}
+dim(cell_fraction)
+colnames(cell_fraction)
+```
+```{r}
+metadata <- as.data.frame(colData(se))
+head(metadata$diseaseType)
+```
+
+```{r}
+metadata <- metadata[rownames(results), , drop = FALSE]
+all(rownames(metadata) == rownames(results))
+```
+```{r}
+annotation_df <- data.frame(Disease = metadata$diseaseType)
+rownames(annotation_df) <- rownames(metadata)
+```
+
+
+
+```{r}
+cell_scaled <- t(scale(t(cell_fraction)))
+
+pheatmap(cell_scaled,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         annotation_row = annotation_df,
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
+         fontsize_row = 8,
+         fontsize_col = 8,
+         main = "CIBERSORTx Cell-Type Proportions (ALL)")
+```
+```{r}
+pheatmap(cell_fraction,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         annotation_row = annotation_df,
+         color = colorRampPalette(c("white", "orange", "red"))(100),
+         main = "Immune Cell Fractions (Raw Proportions)")
+```
+
 
