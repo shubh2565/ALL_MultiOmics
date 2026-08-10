@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(CIBERSORT)
 library(ggplot2)
 library(pheatmap)
+library(ggrepel)
 ```
 
 # Load the dds object
@@ -149,4 +150,134 @@ pheatmap(cell_fraction,
          main = "Immune Cell Fractions (Raw Proportions)")
 ```
 
+```{r}
+# Keep only relevant columns
+cf_sub <- cell_fraction[, c("Total_Bcells", "Total_Tcells")]
 
+# Add sample IDs as a column
+cf_sub$SampleID <- rownames(cf_sub)
+annotation_df$SampleID <- rownames(annotation_df)
+
+# Merge
+df <- merge(cf_sub, annotation_df, by = "SampleID")
+```
+
+
+
+```{r}
+df$Flag <- with(df,
+  ifelse(Disease == "B-ALL" & Total_Tcells > Total_Bcells, "Suspicious",
+  ifelse(Disease == "T-ALL" & Total_Bcells > Total_Tcells, "Suspicious", "OK"))
+)
+```
+
+```{r}
+ggplot(df, aes(x = Total_Bcells, y = Total_Tcells)) +
+  geom_point(aes(color = Flag, shape = Disease), size = 3) +
+  scale_color_manual(values = c("OK" = "grey60", "Suspicious" = "red")) + geom_text_repel(
+    data = subset(df, Flag == "Suspicious"),
+    aes(label = SampleID),
+    size = 3
+  ) +
+  theme_classic()
+```
+```{r}
+df$Disease <- ifelse(is.na(df$Disease), "Unknown", df$Disease)
+
+df$Flag <- ifelse(is.na(df$Flag), "Unknown", df$Flag)
+
+head(df)
+```
+
+```{r}
+ggplot(df, aes(x = Total_Bcells, y = Total_Tcells)) +
+  
+  geom_point(
+    aes(fill = Flag, color = Flag, shape = Disease),
+    size = 3,
+    alpha = 0.7,
+    stroke = 0.8
+  ) +
+  
+  scale_fill_manual(values = c(
+    "OK" = "grey60",
+    "Suspicious" = "red",
+    "Unknown" = "blue"
+  )) +
+  
+  scale_color_manual(values = c(
+    "OK" = "grey30",
+    "Suspicious" = "darkred",
+    "Unknown" = "navy"
+  )) +
+  
+  scale_shape_manual(values = c(
+    "B-ALL" = 21,   # filled circle
+    "T-ALL" = 24,   # filled triangle
+    "Unknown" = 22   # cross (uses color only)
+  )) +
+  
+  geom_text_repel(
+    data = subset(df, Flag == "Suspicious"),
+    aes(label = SampleID),
+    size = 3
+  ) +
+  
+  # guides(
+  # fill = guide_legend(
+  #   override.aes = list(color = c("grey60", "red", "blue"))
+  # ),
+  # color = "none") +
+  
+  theme_classic()
+```
+```{r}
+metadata <- read_csv("finalMetadata_Mofa.csv")
+head(metadata)
+```
+```{r}
+head(df)
+```
+
+```{r}
+dfJoin <- left_join(df, metadata, by = c("SampleID" = "protSample"))
+head(dfJoin)
+```
+```{r}
+ggplot(dfJoin, aes(x = Total_Bcells, y = Total_Tcells)) +
+  
+  geom_point(
+    aes(fill = Flag, color = Flag, shape = Disease),
+    size = 3,
+    alpha = 0.7,
+    stroke = 0.8
+  ) +
+  
+  scale_fill_manual(values = c(
+    "OK" = "grey60",
+    "Suspicious" = "red",
+    "Unknown" = "blue"
+  )) +
+  
+  scale_color_manual(values = c(
+    "OK" = "grey30",
+    "Suspicious" = "darkred",
+    "Unknown" = "navy"
+  )) +
+  
+  scale_shape_manual(values = c(
+    "B-ALL" = 21,   # filled circle
+    "T-ALL" = 24,   # filled triangle
+    "Unknown" = 22   # cross (uses color only)
+  )) +
+  
+  geom_text_repel(
+    data = subset(dfJoin, Flag == "Suspicious"),
+    aes(label = rnaSample),
+    size = 3
+  ) +
+  
+
+  
+  theme_classic()
+```
