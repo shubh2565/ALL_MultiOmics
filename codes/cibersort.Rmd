@@ -1,0 +1,256 @@
+---
+title: "Cibersort"
+author: "Shubham Agrawal"
+date: "2026-03-02"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+    code_folding: "hide"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(CIBERSORT)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(ggplot2)
+library(pheatmap)
+library(ggrepel)
+library(tidyverse)
+```
+
+# Load the dds object
+
+```{r}
+dds <- readRDS("objects/ddsFiltered.Rds")
+dds
+```
+# Normalize the count matrix
+
+```{r}
+vsd <- varianceStabilizingTransformation(dds)
+vsd
+```
+```{r}
+vst_matrix <- assay(vsd)
+head(rownames(vst_matrix))
+```
+# Convert Ensemble IDs to Gene symbols
+
+```{r}
+gene_symbols <- mapIds(org.Hs.eg.db,
+                       keys = rownames(vst_matrix),
+                       column = "SYMBOL",
+                       keytype = "ENSEMBL",
+                       multiVals = "first")
+
+vst_matrix <- vst_matrix[!is.na(gene_symbols), ]
+rownames(vst_matrix) <- gene_symbols[!is.na(gene_symbols)]
+```
+
+```{r}
+head(rownames(vst_matrix))
+```
+# Remove duplicate gene symbols
+
+```{r}
+dim(vst_matrix)
+vst_matrix <- vst_matrix[!duplicated(rownames(vst_matrix)), ]
+dim(vst_matrix)
+```
+
+# Convert to data frame and save the file
+
+```{r}
+input_matrix <- data.frame(GeneSymbol = rownames(vst_matrix),
+                           vst_matrix,
+                           check.names = FALSE)
+
+write.table(input_matrix,
+            file = "ALL_VST_for_CIBERSORTx.txt",
+            sep = "\t",
+            quote = FALSE,
+            row.names = FALSE)
+```
+
+```{r}
+sig_matrix <- system.file("extdata", "LM22.txt", package = "CIBERSORT")
+#mixture_file <- system.file("extdata", "exampleForLUAD.txt", package = "CIBERSORT")
+#mixure_file <- system.file()
+results <- cibersort(sig_matrix, "ALL_VST_for_CIBERSORTx.txt")
+```
+```{r}
+head(results)
+```
+
+```{r}
+dim(results)
+```
+
+```{r}
+results <- as.data.frame(results)
+results$Total_Bcells <- results$`B cells naive` +
+                        results$`B cells memory` +
+                        results$`Plasma cells`
+
+results$Total_Tcells <- results$`T cells CD8` +
+                        results$`T cells CD4 naive` +
+                        results$`T cells CD4 memory resting` +
+                        results$`T cells CD4 memory activated` +
+                        results$`T cells follicular helper` +
+                        results$`T cells regulatory (Tregs)`
+```
+
+```{r}
+ggplot(results, aes(x = Total_Bcells, y = Total_Tcells)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Total B-cell fraction",
+       y = "Total T-cell fraction")
+```
+
+```{r}
+# Remove non-cell columns
+cell_fraction <- results[, !colnames(results) %in% 
+                           c("P-value", "Correlation", "RMSE", "Absolute score")]
+```
+
+
+```{r}
+dim(cell_fraction)
+colnames(cell_fraction)
+```
+```{r}
+metadata <- as.data.frame(colData(dds))
+head(metadata$diseaseType)
+```
+```{r}
+metadata <- metadata[rownames(results), , drop = FALSE]
+all(rownames(metadata) == rownames(results))
+```
+```{r}
+annotation_df <- data.frame(Disease = metadata$diseaseType)
+rownames(annotation_df) <- rownames(metadata)
+```
+
+
+
+```{r}
+cell_scaled <- t(scale(t(cell_fraction)))
+
+pheatmap(cell_scaled,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         annotation_row = annotation_df,
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
+         fontsize_row = 8,
+         fontsize_col = 8,
+         main = "CIBERSORTx Cell-Type Proportions (ALL)")
+```
+
+```{r}
+pheatmap(cell_fraction,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         annotation_row = annotation_df,
+         color = colorRampPalette(c("white", "orange", "red"))(100),
+         main = "Immune Cell Fractions (Raw Proportions)")
+```
+
+```{r}
+# Keep only relevant columns
+cf_sub <- cell_fraction[, c("Total_Bcells", "Total_Tcells")]
+
+# Add sample IDs as a column
+cf_sub$SampleID <- rownames(cf_sub)
+annotation_df$SampleID <- rownames(annotation_df)
+
+# Merge
+df <- merge(cf_sub, annotation_df, by = "SampleID")
+```
+
+
+
+```{r}
+df$Flag <- with(df,
+  ifelse(Disease == "B-ALL" & Total_Tcells > Total_Bcells, "Suspicious",
+  ifelse(Disease == "T-ALL" & Total_Bcells > Total_Tcells, "Suspicious", "OK"))
+)
+```
+
+```{r}
+ggplot(df, aes(x = Total_Bcells, y = Total_Tcells)) +
+  geom_point(aes(color = Flag, shape = Disease), size = 3) +
+  scale_color_manual(values = c("OK" = "grey60", "Suspicious" = "red")) + geom_text_repel(
+    data = subset(df, Flag == "Suspicious"),
+    aes(label = SampleID),
+    size = 3
+  ) +
+  theme_classic()
+```
+
+```{r}
+df$Disease <- ifelse(is.na(df$Disease), "Unknown", df$Disease)
+
+df$Flag <- ifelse(is.na(df$Flag), "Unknown", df$Flag)
+
+head(df)
+```
+
+
+```{r}
+ggplot(df, aes(x = Total_Bcells, y = Total_Tcells)) +
+  
+  geom_point(
+    aes(fill = Flag, color = Flag, shape = Disease),
+    size = 3,
+    alpha = 0.7,
+    stroke = 0.8
+  ) +
+  
+  scale_fill_manual(values = c(
+    "OK" = "grey60",
+    "Suspicious" = "red",
+    "Unknown" = "blue"
+  )) +
+  
+  scale_color_manual(values = c(
+    "OK" = "grey30",
+    "Suspicious" = "darkred",
+    "Unknown" = "navy"
+  )) +
+  
+  scale_shape_manual(values = c(
+    "B-ALL" = 21,   # filled circle
+    "T-ALL" = 24,   # filled triangle
+    "Unknown" = 22   # cross (uses color only)
+  )) +
+  
+  geom_text_repel(
+    data = subset(df, Flag == "Suspicious"),
+    aes(label = SampleID),
+    size = 3
+  ) +
+  
+  guides(
+  fill = guide_legend(
+    override.aes = list(color = c("grey60", "red", "blue"))
+  ),
+  color = "none") +
+  
+  theme_classic()
+```
+```{r}
+metadata <- read_csv("finalMetadata_Mofa.csv")
+head(metadata)
+```
+
+```{r}
+dfJoin <- left_join(df, metadata, by = c("SampleID" = "rnaSample"))
+head(dfJoin)
+```
+
+```{r}
+dfRna <- dfJoin[dfJoin$Flag %in% c("Suspicious","Unknown"), ]
+dfRna
+```
