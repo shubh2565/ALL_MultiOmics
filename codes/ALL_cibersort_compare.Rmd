@@ -1,0 +1,118 @@
+---
+title: "Compare cibersort results"
+author: "Shubham Agrawal"
+date: "2026-08-26"
+output:
+  BiocStyle::html_document:
+    toc_float: true
+    code_folding: "hide"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(pheatmap)
+library(ggrepel)
+library(tidyverse)
+```
+
+```{r}
+rna <- read_csv("rnaCibersort.csv")
+rna <- rna[, 2:ncol(rna)]
+rna
+```
+
+```{r}
+prot <- read_csv("protCibersort.csv")
+prot <- prot[, 2:ncol(prot)]
+prot
+```
+
+```{r}
+df <- full_join(rna, prot, by = c("SampleID" = "rnaSample"))
+```
+```{r}
+dfFilt <- df[df$Flag.x == "Suspicious" | df$Flag.y == "Suspicious", ]
+dfFilt
+```
+```{r}
+dim(dfFilt)
+dfFilt1 <- dfFilt[!apply(is.na(dfFilt), 1, all), ]
+dim(dfFilt1)
+```
+
+```{r}
+write.csv(dfFilt, "cibersortSuspicious.csv")
+write.csv(dfFilt1, "cibersortSuspiciousFiltered.csv")
+```
+
+```{r}
+dfPlot <- dfFilt1 %>%
+  mutate(
+    flag_combined = case_when(
+      Flag.x == "Suspicious" & Flag.y == "Suspicious" ~ "Both Suspicious",
+      Flag.x == "Suspicious" & Flag.y == "OK"         ~ "Only x Suspicious",
+      Flag.x == "OK" & Flag.y == "Suspicious"         ~ "Only y Suspicious",
+      Flag.x == "OK" & Flag.y == "OK"                 ~ "Both OK",
+      TRUE ~ "Unknown"
+    ),
+    sample_label = paste(SampleID, SampleID.y, sep = " / ")
+  )
+```
+
+```{r}
+ggplot(dfPlot, aes(x = Total_Bcells.x, y = Total_Bcells.y)) +
+  geom_point(aes(color = flag_combined), size = 3) +
+  geom_text(
+    aes(label = sample_label),
+    hjust = -0.1,
+    vjust = -0.3,
+    size = 3
+  ) +
+  scale_color_manual(
+    values = c(
+      "Both OK" = "forestgreen",
+      "Only x Suspicious" = "orange",
+      "Only y Suspicious" = "blue",
+      "Both Suspicious" = "red",
+      "Unknown" = "grey"
+    )
+  ) +
+  facet_wrap(~"B cells") +
+  theme_bw() +
+  labs(
+    x = "Total B cells (Transcriptomics)",
+    y = "Total B cells (Proteomics)",
+    color = "Flag combination"
+  )
+```
+
+```{r}
+ggplot(dfPlot, aes(x = Total_Tcells.x, y = Total_Tcells.y)) +
+  geom_point(aes(color = flag_combined), size = 3) +
+  geom_text(
+    aes(label = sample_label),
+    hjust = -0.1,
+    vjust = -0.3,
+    size = 3
+  ) +
+  scale_color_manual(
+    values = c(
+      "Both OK" = "forestgreen",
+      "Only x Suspicious" = "orange",
+      "Only y Suspicious" = "blue",
+      "Both Suspicious" = "red",
+      "Unknown" = "grey"
+    )
+  ) +
+  facet_wrap(~"T cells") +
+  theme_bw() +
+  labs(
+    x = "Total T cells (Trancriptomics)",
+    y = "Total T cells (Proteomics)",
+    color = "Flag combination"
+  )
+```
+
+
+
