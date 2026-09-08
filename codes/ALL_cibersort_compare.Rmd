@@ -51,8 +51,8 @@ dfPlot <- dfFilt1 %>%
   mutate(
     flag_combined = case_when(
       Flag.x == "Suspicious" & Flag.y == "Suspicious" ~ "Both Suspicious",
-      Flag.x == "Suspicious" & Flag.y == "OK"         ~ "Only x Suspicious",
-      Flag.x == "OK" & Flag.y == "Suspicious"         ~ "Only y Suspicious",
+      Flag.x == "Suspicious" & Flag.y == "OK"         ~ "Only Transcriptomics Suspicious",
+      Flag.x == "OK" & Flag.y == "Suspicious"         ~ "Only Proteomics Suspicious",
       Flag.x == "OK" & Flag.y == "OK"                 ~ "Both OK",
       TRUE ~ "Unknown"
     ),
@@ -72,8 +72,8 @@ ggplot(dfPlot, aes(x = Total_Bcells.x, y = Total_Bcells.y)) +
   scale_color_manual(
     values = c(
       "Both OK" = "forestgreen",
-      "Only x Suspicious" = "orange",
-      "Only y Suspicious" = "blue",
+      "Only Transcriptomics Suspicious" = "orange",
+      "Only Proteomics Suspicious" = "blue",
       "Both Suspicious" = "red",
       "Unknown" = "grey"
     )
@@ -99,8 +99,8 @@ ggplot(dfPlot, aes(x = Total_Tcells.x, y = Total_Tcells.y)) +
   scale_color_manual(
     values = c(
       "Both OK" = "forestgreen",
-      "Only x Suspicious" = "orange",
-      "Only y Suspicious" = "blue",
+      "Only Transcriptomics Suspicious" = "orange",
+      "Only Proteomics Suspicious" = "blue",
       "Both Suspicious" = "red",
       "Unknown" = "grey"
     )
