@@ -13,7 +13,10 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(pheatmap)
 library(ggrepel)
+library(SummarizedExperiment)
 library(tidyverse)
+library(DESeq2)
+source("helper.R")
 ```
 
 ```{r}
@@ -114,5 +117,40 @@ ggplot(dfPlot, aes(x = Total_Tcells.x, y = Total_Tcells.y)) +
   )
 ```
 
+```{r}
+dds <- readRDS("/Users/shubhamagrawal/Desktop/ALL/objects/ddsFiltered.Rds")
+dds
+```
+```{r}
+ddsVst <- varianceStabilizingTransformation(dds)
+```
 
+```{r}
+pcaDataFiltered <- DESeq2::plotPCA(ddsVst, intgroup=c("diseaseType", "diagnosisType", "samples"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaDataFiltered, "percentVar"))
+ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+
+ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType, label=samples)) +
+  geom_point(size=3) +
+  #geom_text_repel(aes(label = ifelse(expression %in% c("Up", "Down"), as.character(Gene),"")), max.overlaps = Inf) +
+  geom_label() +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+```
+
+```{r}
+prot <- readRDS("/Users/shubhamagrawal/Desktop/ALL/objects/protoemics.Rds")
+prot
+```
+```{r}
+pca <- stats::prcomp(t(assay(prot)), center = TRUE, scale. = TRUE)
+p1 <- plotPCALL(pca = pca, se = prot, color = "diseaseType", 
+                xaxis = "PC1", yaxis = "PC2")
+p1
+```
 
