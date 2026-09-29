@@ -34,6 +34,13 @@ prot
 ```{r}
 df <- full_join(rna, prot, by = c("SampleID" = "rnaSample"))
 ```
+
+```{r}
+dim(df)
+head(df)
+```
+
+
 ```{r}
 dfFilt <- df[df$Flag.x == "Suspicious" | df$Flag.y == "Suspicious", ]
 dfFilt
