@@ -33,11 +33,11 @@ prot
 
 ```{r}
 df <- full_join(rna, prot, by = c("SampleID" = "rnaSample"))
+head(df)
 ```
 
 ```{r}
 dim(df)
-head(df)
 ```
 
 
@@ -123,6 +123,69 @@ ggplot(dfPlot, aes(x = Total_Tcells.x, y = Total_Tcells.y)) +
     color = "Flag combination"
   )
 ```
+```{r}
+dfB <- df[df$diseaseType.y == "B-ALL", ]
+dim(dfB)
+dfT <- df[df$diseaseType.y == "T-ALL", ]
+dim(dfT)
+```
+```{r}
+ggplot(dfB, aes(x = Total_Tcells.x, y = Total_Tcells.y)) +
+  geom_point() +
+  geom_text(
+    aes(label = paste(str_split(dfB$SampleID, "_") |> sapply(`[`, 3), SampleID.y, sep = " / ")),
+    hjust = -0.1, vjust = -0.3, size = 3, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "maroon") +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  labs(x = "Total T cells (Transcriptomics)", y = "Total T cells (Proteomics)") +
+  ggtitle("B-ALL samples") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_classic()
+```
+```{r}
+ggplot(dfB, aes(x = Total_Bcells.x, y = Total_Bcells.y)) +
+  geom_point() +
+  geom_text(
+    aes(label = paste(str_split(dfB$SampleID, "_") |> sapply(`[`, 3), SampleID.y, sep = " / ")),
+    hjust = -0.1, vjust = -0.3, size = 3, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "maroon") +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  labs(x = "Total B cells (Transcriptomics)", y = "Total B cells (Proteomics)") +
+  ggtitle("B-ALL samples") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_classic()
+```
+```{r}
+ggplot(dfT, aes(x = Total_Tcells.x, y = Total_Tcells.y)) +
+  geom_point() +
+  geom_text(
+    aes(label = paste(str_split(dfB$SampleID, "_") |> sapply(`[`, 3), SampleID.y, sep = " / ")),
+    hjust = -0.1, vjust = -0.3, size = 3, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "maroon") +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  labs(x = "Total T cells (Transcriptomics)", y = "Total T cells (Proteomics)") +
+  ggtitle("T-ALL samples") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_classic()
+```
+```{r}
+ggplot(dfT, aes(x = Total_Bcells.x, y = Total_Bcells.y)) +
+  geom_point() +
+  geom_text(
+    aes(label = paste(str_split(dfB$SampleID, "_") |> sapply(`[`, 3), SampleID.y, sep = " / ")),
+    hjust = -0.1, vjust = -0.3, size = 3, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "maroon") +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  labs(x = "Total B cells (Transcriptomics)", y = "Total B cells (Proteomics)") +
+  ggtitle("T-ALL samples") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_classic()
+```
+
 
 ```{r}
 dds <- readRDS("/Users/shubhamagrawal/Desktop/ALL/objects/ddsFiltered.Rds")
@@ -134,6 +197,10 @@ ddsVst <- varianceStabilizingTransformation(dds)
 
 ```{r}
 pcaDataFiltered <- DESeq2::plotPCA(ddsVst, intgroup=c("diseaseType", "diagnosisType", "samples"), returnData=TRUE)
+```
+
+
+```{r}
 percentVar <- round(100 * attr(pcaDataFiltered, "percentVar"))
 ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType)) +
   geom_point(size=3) +
@@ -154,10 +221,80 @@ ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType, la
 prot <- readRDS("/Users/shubhamagrawal/Desktop/ALL/objects/protoemics.Rds")
 prot
 ```
+
 ```{r}
 pca <- stats::prcomp(t(assay(prot)), center = TRUE, scale. = TRUE)
+pc1 <- pca$x[,1]
 p1 <- plotPCALL(pca = pca, se = prot, color = "diseaseType", 
                 xaxis = "PC1", yaxis = "PC2")
 p1
 ```
+
+```{r}
+class(pc1)
+pc1DF <- data.frame(pc1 = pc1)
+head(pc1DF)
+pc1DF$sampleID <- rownames(pc1DF)
+head(pc1DF)
+```
+
+
+```{r}
+head(pcaDataFiltered)
+```
+```{r}
+dfMerge <- full_join(pcaDataFiltered, rna, by = c("samples" = "SampleID"))
+head(dfMerge)
+dfMerge2 <- full_join(dfMerge, pc1DF, by = c("protSample" = "sampleID"))
+head(dfMerge2)
+```
+
+```{r}
+dfMerge2 <- dfMerge2[, c("samples", "protSample", "PC1", "pc1", "Disease", "diagnosisType.x")]
+head(dfMerge2)
+```
+
+```{r}
+dfMerge2B <- dfMerge2[dfMerge2$Disease == "B-ALL", ]
+dfMerge2T <- dfMerge2[dfMerge2$Disease == "T-ALL", ]
+```
+
+
+
+
+```{r}
+ggplot(dfMerge2T, aes(x = PC1, y = pc1)) +
+  geom_point() +
+  geom_text(
+    aes(label = paste(str_split(samples, "_") |> sapply(`[`, 3), protSample, sep = " / ")),
+    hjust = -0.1, vjust = -0.3, size = 3, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "maroon") +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  coord_cartesian(xlim = c(-100, 100), ylim = c(-100, 100)) +
+  labs(x = "PC1 (Transcriptomics)", y = "PC1 (Proteomics)") +
+  ggtitle("T-ALL samples") +
+  theme_classic()
+```
+
+```{r}
+ggplot(dfMerge2B, aes(x = PC1, y = pc1)) +
+  geom_point() +
+  geom_text(
+    aes(label = paste(str_split(samples, "_") |> sapply(`[`, 3), protSample, sep = " / ")),
+    hjust = -0.1, vjust = -0.3, size = 3, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "maroon") +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = "grey50" ) +
+  coord_cartesian(xlim = c(-100, 100), ylim = c(-100, 100)) +
+  labs(x = "PC1 (Transcriptomics)", y = "PC1 (Proteomics)") +
+  ggtitle("B-ALL samples") +
+  theme_classic()
+```
+
+
+
+
+
+
 
