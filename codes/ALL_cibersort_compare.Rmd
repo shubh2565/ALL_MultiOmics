@@ -207,8 +207,10 @@ ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType)) +
   xlab(paste0("PC1: ",percentVar[1],"% variance")) +
   ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
   coord_fixed()
+```
 
-ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType, label=samples)) +
+```{r}
+ggplot(pcaDataFiltered, aes(PC1, PC2, color=diseaseType, shape=diagnosisType, label=str_split(samples, "_") |> sapply(`[`, 3))) +
   geom_point(size=3) +
   #geom_text_repel(aes(label = ifelse(expression %in% c("Up", "Down"), as.character(Gene),"")), max.overlaps = Inf) +
   geom_label() +
@@ -229,6 +231,18 @@ p1 <- plotPCALL(pca = pca, se = prot, color = "diseaseType",
                 xaxis = "PC1", yaxis = "PC2")
 p1
 ```
+
+```{r}
+samples_to_label <- c("S17", "S37", "S39", "S56", "S57", "S67", "S93", "S105", "S114")
+p1 +
+  geom_text_repel(
+    data = subset(p1$data, rowname %in% samples_to_label),
+    aes(x = PC1, y = PC2, label = rowname),
+    inherit.aes = FALSE,
+    size = 3
+  )
+```
+
 
 ```{r}
 class(pc1)
